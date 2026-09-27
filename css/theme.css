@@ -1,0 +1,607 @@
+/* ============================================================
+   theme.css — Pro Dark theme, shared by all four pages.
+
+   Loaded AFTER css/styles.css, which keeps its structure and
+   layout; this file only changes the look. Two passes: first it
+   re-points the design tokens styles.css already uses, which
+   re-colours most of the app on its own, then it restyles the
+   real surfaces as solid elevated panels.
+
+   Replaces the earlier "Liquid Glass" material (near-transparent
+   frosted panels over a six-colour rainbow backdrop) with a
+   flatter, higher-contrast dashboard look: opaque slate cards,
+   a single gold brand accent + emerald "winning bid" green, a
+   condensed sports-scoreboard display face for names/numbers,
+   and shadows used for elevation rather than neon glow.
+   ============================================================ */
+
+:root{
+  /* --- re-point the tokens styles.css already uses --- */
+  --ink:#05070C;
+  --turf-dark:#05070C;
+  --turf:#0A0E17;
+  --turf-light:rgba(255,255,255,.06);
+  --panel:#121826;
+  --panel-2:#0D1219;
+  --cream:#F1F5F9;
+  --cream-dim:rgba(226,232,240,.64);
+  --line:rgba(255,255,255,.09);
+  --line-strong:rgba(255,255,255,.18);
+  --gold:#E4AE49;
+  --gold-dim:#B0812C;
+  --good:#30D158;
+  --warn:#E4AE49;
+  --bad:#FF453A;
+  --ball:#FF453A;
+  --ball-light:#FF7A70;
+  --font-display:"Barlow Condensed","Arial Narrow","Helvetica Neue Condensed",sans-serif;
+  --font-body:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+
+  /* --- surface tokens --- */
+  --pv-ink:#F1F5F9;
+  --pv-ink-2:rgba(226,232,240,.76);
+  --pv-ink-3:rgba(226,232,240,.50);
+  --pv-r:16px;
+  --pv-r-in:10px;
+  /* solid-ish slate panel — a hairline of gradient for depth, not transparency */
+  --pv-mat:linear-gradient(180deg, rgba(20,26,40,.94), rgba(13,18,28,.96));
+  --pv-blur:blur(18px) saturate(120%);
+
+  /* --- accent palette: one brand gold, one "winning bid" green, a handful
+     of muted hues reserved for category tags --- */
+  --pv-blue:#3B82F6;   --pv-blue-l:#7FB0FF;
+  --pv-green:#30D158;  --pv-green-l:#6EE7A0;
+  --pv-purple:#8B5CF6; --pv-purple-l:#B8A2FF;
+  --pv-orange:#E4AE49; --pv-orange-l:#F3CD84;
+  --pv-pink:#FB5A6B;   --pv-pink-l:#FF97A0;
+  --pv-teal:#14B8A6;   --pv-teal-l:#5EEAD4;
+}
+
+/* ---- backdrop ----
+   A near-black navy base with two faint, static glows (brand gold, top;
+   winning-bid green, lower corner) instead of six saturated rainbow orbs —
+   enough depth to keep the page from feeling flat, not enough to compete
+   with the panels sitting on top of it. */
+body{
+  background:
+    radial-gradient(60rem 42rem at 18% -12%, rgba(228,174,73,.10), transparent 60%),
+    radial-gradient(54rem 46rem at 96% 108%, rgba(48,209,88,.07), transparent 62%),
+    #060810
+    fixed;
+  background-attachment:fixed;
+  color:var(--pv-ink);
+}
+::selection{background:rgba(228,174,73,.35); color:#1A1000;}
+a{color:var(--pv-blue-l);}
+
+/* ============================================================
+   SURFACES
+   Flat, opaque, elevated panels — a hairline border plus a dark
+   drop shadow for depth. No frosted transparency, no glow rim.
+   ============================================================ */
+.card, .gate-box, .modal-box, .player-card, .team-card, .team-box, .chip,
+.status-banner, .pv-toast, .home-hero{
+  position:relative;
+  background:var(--pv-mat);
+  border:1px solid var(--line);
+  -webkit-backdrop-filter:var(--pv-blur);
+  backdrop-filter:var(--pv-blur);
+}
+
+/* ---- floating header ---- */
+header.top{
+  position:sticky; top:14px; z-index:50;
+  width:min(1180px, calc(100% - 28px));
+  margin:14px auto 0;
+  padding:12px 20px 0;
+  border:1px solid var(--line); border-radius:16px;
+  background:var(--pv-mat);
+  -webkit-backdrop-filter:var(--pv-blur);
+  backdrop-filter:var(--pv-blur);
+  box-shadow:0 18px 36px -22px rgba(0,0,0,.85);
+}
+header.top:not(:has(nav.tabs)){padding-bottom:12px;}
+header.top .top-row{max-width:none;}
+header.top .brand h1{
+  font-family:var(--font-display); font-size:19px; font-weight:700; letter-spacing:.4px; text-transform:none; color:#fff;
+}
+header.top .brand h1 span{
+  background:linear-gradient(180deg,var(--pv-orange-l),var(--pv-orange));
+  -webkit-background-clip:text; background-clip:text; color:transparent; font-weight:700;
+}
+header.top .brand small{letter-spacing:0; text-transform:none; font-size:11.5px; color:var(--pv-ink-3);}
+header.top .brand .paddle{
+  border-radius:9px; transform:none; color:#1A1000; font-size:16px;
+  background:linear-gradient(140deg,var(--pv-orange-l),var(--pv-orange));
+  box-shadow:0 4px 12px -4px rgba(228,174,73,.55);
+}
+.top-actions .session-info{color:var(--pv-ink-3); font-size:11.5px;}
+
+/* ---- tabs: a row of understated pills that collapses to a hamburger ----
+   Bootstrap's .navbar-expand-lg CSS hides the toggler and forces the list
+   visible from lg up; below that the list is a .collapse we toggle with
+   .show from shared.js. */
+nav.tabs{
+  margin:10px 0 0; overflow:visible;
+  border-top:1px solid var(--line);
+  padding:10px 0 12px;
+}
+@media(min-width:992px){ nav.tabs{padding-bottom:16px;} }
+nav.tabs .navbar-nav{gap:6px; flex-wrap:wrap;}
+@media(max-width:991.98px){
+  nav.tabs .navbar-nav{gap:4px; width:100%; padding-top:10px;}
+  nav.tabs .navbar-nav button{width:100%; text-align:left;}
+}
+
+/* the hamburger itself */
+.pv-burger{
+  display:inline-flex; align-items:center; gap:11px;
+  padding:9px 16px; border-radius:10px;
+  background:rgba(255,255,255,.06); border:1px solid var(--line-strong);
+  color:#fff; font-size:13px; font-weight:600;
+  /* same leak as nav.tabs button below: the generic button{} rule's own
+     12px blur would otherwise stack on top of the header's much stronger
+     one right where this sits */
+  -webkit-backdrop-filter:none; backdrop-filter:none;
+}
+.pv-burger:focus{box-shadow:0 0 0 3px rgba(228,174,73,.35);}
+.pv-burger-bars{display:inline-flex; flex-direction:column; gap:3.5px; width:17px;}
+.pv-burger-bars i{display:block; height:2px; border-radius:2px; background:#fff; transition:transform .2s ease, opacity .2s ease;}
+.pv-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(1){transform:translateY(5.5px) rotate(45deg);}
+.pv-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(2){opacity:0;}
+.pv-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(3){transform:translateY(-5.5px) rotate(-45deg);}
+.pv-burger-text{letter-spacing:-.1px;}
+/* if the Bootstrap CDN is unreachable there is no .collapse/.navbar-expand
+   CSS, so the list would show permanently alongside a dead burger. Hide the
+   burger and lay the tabs out ourselves. */
+.pv-no-bs .pv-burger{display:none;}
+.pv-no-bs nav.tabs .navbar-nav{display:flex; flex-direction:row; flex-wrap:wrap; gap:6px;}
+
+nav.tabs button{
+  font-family:var(--font-display); text-transform:uppercase; letter-spacing:.5px;
+  font-size:12.5px; font-weight:600; color:var(--pv-ink-3);
+  background:transparent; border:none; border-bottom:none;
+  border-radius:8px; padding:7px 15px;
+  transition:background .16s ease, color .16s ease;
+  /* the generic button{} rule sets these three, and this rule never touched
+     them, so they leaked through onto every nav pill: an always-on inset
+     ring, a 12px blur stacked on the header's OWN much stronger blur, and
+     (on hover) a 1px lift. Together they showed up as a stray glow/blur
+     hovering a tab appeared to cast onto the page content just below the
+     header. A flat nav pill wants none of that. */
+  box-shadow:none;
+  -webkit-backdrop-filter:none; backdrop-filter:none;
+}
+nav.tabs button:hover{color:#fff; background:rgba(255,255,255,.06); transform:none;}
+nav.tabs button.active{
+  color:var(--pv-orange-l); background:rgba(228,174,73,.12);
+  box-shadow:inset 0 0 0 1px rgba(228,174,73,.28);
+}
+
+main{max-width:1180px; margin:22px auto 80px; padding:0 14px;}
+
+/* ---- panels ---- */
+.card{
+  /* Bootstrap's own .card makes it a flex column; ours is a plain block */
+  display:block;
+  border-radius:var(--pv-r); padding:26px; margin-bottom:18px;
+  box-shadow:0 20px 40px -28px rgba(0,0,0,.7), 0 2px 6px -2px rgba(0,0,0,.4);
+}
+.card h2{
+  font-family:var(--font-display); text-transform:uppercase; letter-spacing:.5px;
+  font-size:14.5px; font-weight:650; color:var(--pv-ink-2); margin:0 0 14px;
+}
+.card h2 .n{
+  font-family:var(--font-body); font-size:11.5px; font-weight:620; border-radius:999px;
+  background:rgba(255,255,255,.08); color:var(--pv-ink-3); padding:2px 9px;
+}
+.hint{color:var(--pv-ink-3); font-size:12px; line-height:1.55;}
+
+/* ---- controls ---- */
+button{
+  font-family:var(--font-body); border-radius:10px; font-weight:600; font-size:13px;
+  background:rgba(255,255,255,.07); color:#fff; border:1px solid var(--line-strong);
+  transition:background .16s ease, transform .16s ease, filter .16s ease, border-color .16s ease;
+}
+button:hover{background:rgba(255,255,255,.13); border-color:rgba(255,255,255,.3); transform:translateY(-1px);}
+button:active{transform:translateY(0);}
+button:disabled{opacity:.32; transform:none;}
+button.primary{
+  background:linear-gradient(180deg, var(--pv-orange-l), var(--pv-orange));
+  color:#1A1000; border-color:rgba(0,0,0,.1); font-weight:700;
+  box-shadow:0 10px 22px -12px rgba(228,174,73,.55);
+}
+button.primary:hover{filter:brightness(1.06);}
+button.danger{
+  background:linear-gradient(180deg, #FF7A70, #FF453A);
+  color:#fff; border-color:rgba(0,0,0,.1);
+  box-shadow:0 10px 22px -12px rgba(255,69,58,.5);
+}
+button.ghost{background:rgba(255,255,255,.05);}
+button.sm{padding:6px 13px; font-size:11.5px; border-radius:8px;}
+button.xl{padding:14px 28px; font-size:15px; letter-spacing:.1px; border-radius:12px;}
+button.block{width:100%; border-radius:10px;}
+
+label{color:var(--pv-ink-3); text-transform:none; letter-spacing:0; font-size:11.5px; font-weight:580;}
+input[type=text], input[type=number], input[type=password], select, textarea, input[type=file]{
+  background:rgba(0,0,0,.28); color:#fff;
+  border:1px solid var(--line-strong); border-radius:9px;
+}
+input:focus, select:focus, textarea:focus{
+  outline:none; border-color:rgba(228,174,73,.7);
+  box-shadow:0 0 0 3px rgba(228,174,73,.22);
+}
+input::placeholder, textarea::placeholder{color:rgba(226,232,240,.32);}
+select option{background:#101623; color:#fff;}
+input[type=file]::file-selector-button{
+  background:rgba(255,255,255,.10); color:#fff; border:1px solid var(--line-strong);
+  border-radius:7px; font-weight:580;
+}
+
+/* ---- tables ---- */
+th{
+  font-family:var(--font-display); text-transform:uppercase; letter-spacing:.6px;
+  font-size:11px; font-weight:620; color:var(--pv-ink-3);
+  border-bottom:1px solid var(--line-strong); padding-bottom:9px;
+}
+td{border-bottom:1px solid var(--line); padding:11px 10px;}
+tr:hover td{background:rgba(255,255,255,.03);}
+
+/* ---- badges ---- */
+.badge{border-radius:999px; font-weight:620; letter-spacing:.2px; text-transform:none; font-size:11px; padding:3px 11px;}
+.badge.cat{background:rgba(255,255,255,.08); color:var(--pv-ink-2); box-shadow:inset 0 0 0 1px var(--line-strong);}
+.badge.pending{background:rgba(228,174,73,.16); color:#F3CD84; box-shadow:inset 0 0 0 1px rgba(228,174,73,.4);}
+.badge.sold, .badge.active-key{background:rgba(48,209,88,.16); color:#8BF0AC; box-shadow:inset 0 0 0 1px rgba(48,209,88,.4);}
+.badge.unsold, .badge.revoked{background:rgba(255,69,58,.14); color:#FFA79F; box-shadow:inset 0 0 0 1px rgba(255,69,58,.4);}
+
+/* ---- stat chips ---- */
+.chip{
+  border-radius:var(--pv-r-in); padding:13px 18px; min-width:118px;
+}
+.chip .val{
+  font-family:var(--font-display); font-size:26px; font-weight:650; letter-spacing:-.2px;
+  font-variant-numeric:tabular-nums;
+  color:var(--pv-orange-l);
+}
+.chip .lbl{font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--pv-ink-3); margin-top:4px;}
+
+/* ---- auction floor ---- */
+.player-card{
+  border-radius:var(--pv-r); padding:30px;
+  box-shadow:0 20px 40px -28px rgba(0,0,0,.7);
+}
+/* team.js nests a .player-card inside a .card and zeroes its background
+   inline; without this it would draw a second nested panel border inside
+   the real one. Surfaces never stack on surfaces. */
+.card .player-card{
+  background:transparent; border:none; box-shadow:none; padding:0;
+  -webkit-backdrop-filter:none; backdrop-filter:none;
+}
+
+.player-card .idx{font-family:var(--font-body); font-size:11.5px; color:var(--pv-ink-3);}
+.player-name{
+  font-family:var(--font-display); text-transform:uppercase; letter-spacing:-.5px;
+  font-size:clamp(30px,3.8vw,44px); font-weight:650; color:#fff; min-height:0; margin:10px 0 6px;
+}
+.base-price{font-family:var(--font-body); font-size:13px; color:var(--pv-ink-3); margin-bottom:16px;}
+.scoreboard{
+  background:transparent; border:none; padding:0; margin:6px 0 16px;
+}
+.scoreboard .price{
+  font-family:var(--font-display); font-size:clamp(48px,7.5vw,78px); font-weight:700; letter-spacing:-1px;
+  font-variant-numeric:tabular-nums;
+  color:var(--pv-orange-l);
+}
+.scoreboard .plabel{
+  font-size:10.5px; letter-spacing:1.3px; text-transform:uppercase; color:var(--pv-ink-3); margin-top:2px;
+}
+/* who is winning the lot gets its own quiet capsule */
+.leader-line{font-size:14px; color:var(--pv-ink-2); margin-bottom:16px;}
+.leader-line .lname{
+  display:inline-block; margin-left:6px;
+  padding:8px 18px; border-radius:999px;
+  font-size:clamp(17px,2vw,22px); font-weight:700; letter-spacing:-.2px; color:#8BF0AC;
+  background:rgba(48,209,88,.14);
+  box-shadow:inset 0 0 0 1px rgba(48,209,88,.4);
+}
+.floor-controls{gap:10px;}
+
+/* ---- team boxes on the floor ---- */
+.team-box{
+  border-radius:var(--pv-r-in); padding:14px;
+}
+.team-box:hover{border-color:var(--line-strong);}
+.team-box.leader{border-color:rgba(48,209,88,.5); box-shadow:inset 0 0 0 1px rgba(48,209,88,.3);}
+.team-box .tname{font-weight:640; font-size:14px; letter-spacing:-.1px;}
+.team-box .tstat{font-family:var(--font-body); font-size:12px; color:var(--pv-ink-3); font-variant-numeric:tabular-nums;}
+.team-box .tag-leader{
+  background:var(--pv-green); color:#04270F; border-radius:999px; font-size:9px; font-weight:700;
+}
+.team-box .barbg{background:rgba(0,0,0,.4); border-radius:999px; height:5px;}
+.team-box .barfg{background:linear-gradient(90deg,var(--pv-orange-l),var(--pv-orange)); border-radius:999px;}
+
+/* ---- team cards ---- */
+.team-card{
+  border-radius:var(--pv-r-in); padding:18px;
+}
+.team-card.warn{border-color:rgba(255,69,58,.5); box-shadow:inset 0 0 0 1px rgba(255,69,58,.25);}
+.team-card .head h3{
+  font-family:var(--font-display); text-transform:uppercase; letter-spacing:.2px; font-size:16px; font-weight:650;
+}
+.team-card .stats-row{font-family:var(--font-body); font-size:12.5px; color:var(--pv-ink-3); font-variant-numeric:tabular-nums;}
+.team-card .budgetbar{background:rgba(0,0,0,.4); border-radius:999px; height:6px;}
+.team-card .budgetbar .fg{background:linear-gradient(90deg,var(--pv-green),var(--pv-orange)); border-radius:999px;}
+.squad-row{border-bottom:1px solid var(--line); font-size:12.5px;}
+.squad-row .p-meta{color:var(--pv-ink-3);}
+.warn-banner{
+  background:rgba(255,69,58,.12); border:1px solid rgba(255,69,58,.35); color:#FFC7C1;
+  border-radius:10px; font-size:11.5px;
+}
+
+/* ---- progress + bars ---- */
+.progress-outer{background:rgba(0,0,0,.4); border-radius:999px; height:6px;}
+.progress-inner{background:linear-gradient(90deg,var(--pv-orange-l),var(--pv-orange)); border-radius:999px;}
+.bar-row .track{background:rgba(0,0,0,.4); border-radius:999px; height:10px;}
+.bar-row .fill{background:linear-gradient(90deg,var(--pv-blue-l),var(--pv-blue)); border-radius:999px;}
+.bar-row .amt{font-family:var(--font-body); font-variant-numeric:tabular-nums; color:var(--pv-ink-2);}
+.bar-row .name{font-size:12.5px;}
+
+/* ---- player photos: concentric with their container ---- */
+.p-photo{border:1px solid var(--line); background:#0B0E16;}
+.p-photo.sm{border-radius:8px;}
+.p-photo.md{border-radius:10px;}
+.p-photo.lg{
+  border:1px solid var(--line); border-radius:calc(var(--pv-r) - 4px);
+  box-shadow:0 16px 32px -20px rgba(0,0,0,.7);
+}
+.photo-picker .preview{border:1px solid var(--line); border-radius:9px; background:#0B0E16;}
+
+/* ---- gate / modal / toast ---- */
+.gate-box{
+  border-radius:var(--pv-r); padding:34px;
+  box-shadow:0 24px 50px -26px rgba(0,0,0,.75);
+}
+.gate-box h2{font-family:var(--font-display); text-transform:uppercase; letter-spacing:.3px; font-size:24px; font-weight:650; color:#fff;}
+.gate-box p.sub{color:var(--pv-ink-3); font-size:13px;}
+.gate-box .paddle-lg, .home-hero .paddle-lg{
+  border-radius:14px; transform:none; color:#1A1000;
+  background:linear-gradient(140deg,var(--pv-orange-l),var(--pv-orange));
+  box-shadow:0 12px 28px -12px rgba(228,174,73,.5);
+}
+.gate-box input{border-radius:12px; text-align:center; letter-spacing:2px;}
+.gate-error{color:#FFA79F; font-size:12.5px;}
+.modal-overlay{background:rgba(3,5,10,.66); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);}
+.modal-box{
+  border-radius:16px; padding:24px;
+  box-shadow:0 26px 56px -22px rgba(0,0,0,.8);
+}
+.modal-box h3{font-family:var(--font-display); text-transform:uppercase; letter-spacing:.3px; font-size:20px; font-weight:650; color:#fff;}
+/* ---- toasts ----
+   The surface group above sets position:relative, which would beat the
+   position:fixed in styles.css and drop the toast into the page flow at the
+   bottom of the document — where it reads as a cut-off box in the corner.
+   The stack itself is the fixed element instead, so several toasts queue
+   upwards rather than landing on top of each other. */
+#toastRoot{
+  position:fixed; z-index:400;
+  right:16px; bottom:16px; left:auto;
+  display:flex; flex-direction:column; align-items:flex-end; gap:10px;
+  width:max-content; max-width:min(380px, calc(100vw - 32px));
+  pointer-events:none;
+}
+.pv-toast{
+  position:static; margin:0; max-width:100%; pointer-events:auto;
+  border-radius:12px; color:#fff; font-size:13px; line-height:1.5;
+  padding:13px 18px;
+  box-shadow:0 20px 40px -18px rgba(0,0,0,.75);
+}
+/* success/error used to come from an inline border colour, which this theme's
+   border override would silently swallow — carry the tone in the border instead */
+.pv-toast.success{
+  background:rgba(48,209,88,.16); border-color:rgba(48,209,88,.4);
+}
+.pv-toast.error{
+  background:rgba(255,69,58,.16); border-color:rgba(255,69,58,.4);
+}
+/* on a phone the stack spans the width so long messages never clip */
+@media(max-width:575.98px){
+  #toastRoot{left:12px; right:12px; bottom:12px; width:auto; max-width:none; align-items:stretch;}
+  .pv-toast{max-width:none;}
+}
+
+/* ---- access keys ---- */
+.key-list-row{border-bottom:1px solid var(--line);}
+.key-code{
+  font-family:var(--font-mono); color:var(--pv-orange-l); background:rgba(0,0,0,.35);
+  border-radius:7px; letter-spacing:1px;
+}
+.key-meta{color:var(--pv-ink-3); font-size:11.5px;}
+
+/* ============================================================
+   THE LIVE LOT — shared by index.html and team.html
+   ============================================================ */
+.pv-lot{padding:30px;}
+@media(max-width:575.98px){ .pv-lot{padding:22px;} }
+
+/* The lot splits photo-left / detail-right with its own grid rather than
+   Bootstrap columns, so index.html and team.html render it identically even
+   though only index.html loads Bootstrap. */
+/* A grid track of `1fr` is minmax(auto,1fr), and that `auto` floor is
+   min-content — so a wide child (a row of buttons, a table) silently pushes
+   the whole track past the viewport instead of wrapping. Every grid track
+   here is floored at 0 and every item allowed to shrink. */
+.floor{grid-template-columns:minmax(0,1fr);}
+.pv-lot-grid > *{min-width:0;}
+
+.pv-lot-grid{display:grid; grid-template-columns:minmax(0,1fr); gap:26px; align-items:center;}
+.pv-lot-detail{text-align:center;}
+@media(min-width:900px){
+  .pv-lot-grid{grid-template-columns:minmax(0,5fr) minmax(0,7fr); gap:42px;}
+  .pv-lot-detail{text-align:left;}
+}
+
+/* concentric: the photo's radius is the panel's minus its inset */
+.pv-photo-frame{
+  width:100%; max-width:320px; margin:0 auto;
+  border-radius:calc(var(--pv-r) - 2px);
+  padding:5px;
+  background:var(--panel);
+  border:1px solid var(--line);
+}
+.pv-photo{
+  display:block; width:100%; aspect-ratio:1/1; object-fit:cover; object-position:center top;
+  border-radius:calc(var(--pv-r) - 6px); background:#0B0E16;
+}
+@media(max-width:899.98px){ .pv-photo-frame{max-width:240px;} }
+
+.pv-eyebrow{
+  display:inline-flex; align-items:center; gap:7px;
+  font-size:11px; font-weight:650; letter-spacing:.8px; text-transform:uppercase;
+  color:var(--pv-ink-3); margin-bottom:10px;
+}
+.pv-live-dot{
+  width:7px; height:7px; border-radius:50%; background:var(--pv-green);
+  animation:pvPing 2s ease-in-out infinite;
+}
+@keyframes pvPing{0%,100%{opacity:1;} 50%{opacity:.3;}}
+
+.pv-name{
+  font-family:var(--font-display); text-transform:uppercase;
+  font-size:clamp(30px, 3.8vw, 44px); font-weight:650; letter-spacing:-.5px;
+  line-height:1.05; margin:0 0 14px; color:#fff;
+}
+.pv-meta{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:22px; justify-content:center;}
+@media(min-width:900px){ .pv-meta{justify-content:flex-start;} }
+
+/* the team owner's bid button hangs below the bid, inside the detail column */
+.pv-bid-actions{margin-top:22px; padding-top:20px; border-top:1px solid var(--line);}
+.pv-bid-actions .primary{font-size:16px; padding:15px 34px;}
+
+/* the two raises sit side by side: the raise on top, the resulting bid below,
+   so an owner can see both what it costs and where it lands */
+.pv-bid-buttons{display:flex; gap:12px; flex-wrap:wrap; justify-content:center;}
+@media(min-width:900px){ .pv-bid-buttons{justify-content:flex-start;} }
+.pv-bid-btn{
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  padding:11px 26px; border-radius:12px; min-width:132px; line-height:1.2;
+}
+.pv-bid-btn-raise{font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; opacity:.72;}
+.pv-bid-btn-total{font-size:16px; font-weight:700; letter-spacing:-.1px;}
+@media(max-width:399.98px){ .pv-bid-btn{flex:1 1 100%; min-width:0;} }
+/* the moderator's SOLD/UNSOLD row lives in the detail column, so it follows
+   the same centre-on-mobile, left-on-desktop rule as the rest of it */
+.pv-lot-detail .floor-controls{justify-content:center; margin-top:0;}
+@media(min-width:900px){ .pv-lot-detail .floor-controls{justify-content:flex-start;} }
+.pv-bid-note{font-size:12.5px; color:var(--pv-ink-3); line-height:1.55; margin:12px 0 0; max-width:420px;}
+.pv-bid-note.good{color:var(--pv-green-l);}
+@media(max-width:899.98px){ .pv-bid-note{margin-left:auto; margin-right:auto;} }
+
+/* ---- category chips ---- */
+.pv-tag{
+  display:inline-block; padding:5px 13px; border-radius:999px;
+  font-size:12px; font-weight:620; letter-spacing:.1px; white-space:nowrap;
+  background:rgba(255,255,255,.08); color:var(--pv-ink-2);
+  box-shadow:inset 0 0 0 1px var(--line-strong);
+}
+.pv-tag.sm{padding:3px 10px; font-size:11px;}
+.pv-tag.ghost{color:var(--pv-ink-2);}
+.pv-tag.hue-blue  {background:rgba(59,130,246,.16);  color:#9CC5FF; box-shadow:inset 0 0 0 1px rgba(59,130,246,.35);}
+.pv-tag.hue-green {background:rgba(48,209,88,.16);   color:#8BF0AC; box-shadow:inset 0 0 0 1px rgba(48,209,88,.35);}
+.pv-tag.hue-purple{background:rgba(139,92,246,.18);  color:#CBB8FF; box-shadow:inset 0 0 0 1px rgba(139,92,246,.35);}
+.pv-tag.hue-orange{background:rgba(228,174,73,.18);  color:#F3CD84; box-shadow:inset 0 0 0 1px rgba(228,174,73,.35);}
+.pv-tag.hue-pink  {background:rgba(251,90,107,.16);  color:#FFA3AC; box-shadow:inset 0 0 0 1px rgba(251,90,107,.35);}
+.pv-tag.hue-teal  {background:rgba(20,184,166,.18);  color:#7EE7DA; box-shadow:inset 0 0 0 1px rgba(20,184,166,.35);}
+
+/* the bid is the headline */
+.pv-bidblock{padding-top:20px; border-top:1px solid var(--line);}
+@media(min-width:900px){
+  .pv-bidblock{display:flex; align-items:flex-end; justify-content:space-between; gap:28px; flex-wrap:wrap;}
+  .pv-bidblock .pv-bid{margin-bottom:0;}
+  .pv-bidblock .pv-leader{margin-bottom:9px;}
+}
+.pv-bidlabel{
+  font-size:11px; font-weight:640; letter-spacing:1.2px; text-transform:uppercase;
+  color:var(--pv-ink-3); margin-bottom:5px;
+}
+.pv-bid{
+  display:flex; align-items:baseline; gap:10px; justify-content:center;
+  line-height:1; margin-bottom:14px;
+}
+.pv-bid .pv-amt{
+  font-family:var(--font-display); font-size:clamp(52px, 8.5vw, 88px); font-weight:700; letter-spacing:-1px;
+  font-variant-numeric:tabular-nums;
+  color:var(--pv-orange-l);
+}
+.pv-bid .pv-unit{font-family:var(--font-body); font-size:clamp(17px, 2vw, 22px); font-weight:580; color:var(--pv-ink-3);}
+@media(min-width:900px){ .pv-bid{justify-content:flex-start;} }
+
+/* who is winning the lot is the second thing the room looks at after the
+   number, so it gets its own quiet capsule rather than a line of body text */
+.pv-leader{display:inline-flex; align-items:center; gap:13px; font-size:14px; color:var(--pv-ink-2);}
+.pv-leader.is-leading{
+  padding:12px 22px 12px 18px; border-radius:999px;
+  background:rgba(48,209,88,.14);
+  box-shadow:inset 0 0 0 1px rgba(48,209,88,.35);
+}
+.pv-leader-dot{
+  width:11px; height:11px; border-radius:50%; background:var(--pv-green); flex-shrink:0;
+  animation:pvPing 2s ease-in-out infinite;
+}
+.pv-leader-txt{text-align:left; line-height:1.15;}
+.pv-leader-label{
+  font-size:10.5px; font-weight:680; letter-spacing:1.5px; text-transform:uppercase;
+  color:rgba(139,240,172,.82); margin-bottom:3px;
+}
+.pv-leader-name{
+  font-family:var(--font-display); font-size:clamp(20px, 2.4vw, 27px); font-weight:650; letter-spacing:-.2px;
+  color:#8BF0AC;
+}
+.pv-leader-none{color:var(--pv-ink-3);}
+
+/* ---- status banners ---- */
+.status-banner{
+  border-radius:var(--pv-r); padding:22px 24px;
+  box-shadow:0 16px 34px -22px rgba(0,0,0,.7);
+}
+.status-banner .ttl{font-family:var(--font-display); text-transform:uppercase; letter-spacing:.3px; font-size:18px; font-weight:650;}
+.status-banner .sub{color:var(--pv-ink-2); font-size:13.5px;}
+.status-banner.paused .ttl{color:var(--pv-orange-l);}
+.status-banner.waiting .ttl{color:var(--pv-orange-l);}
+.status-banner.done .ttl{color:var(--pv-green-l);}
+.pulse-dot{background:var(--pv-orange);}
+.conn-dot.on{background:var(--pv-green);}
+.conn-dot.off{background:var(--bad);}
+
+/* ---- danger zone ---- */
+.danger-zone{border-color:rgba(255,69,58,.35); box-shadow:0 20px 40px -28px rgba(0,0,0,.7);}
+.danger-zone h2{color:#FFA79F;}
+.danger-row{border-bottom:1px solid var(--line);}
+.danger-row .what p{color:var(--pv-ink-3);}
+
+/* ---- results table (shared renderer) ---- */
+.sales-table .amt{color:var(--pv-orange-l); font-family:var(--font-body); font-weight:660;}
+.sales-table .when{color:var(--pv-ink-3); font-family:var(--font-body);}
+.queue-chip{
+  background:rgba(255,255,255,.06); border-radius:999px; color:var(--pv-ink-2);
+  box-shadow:inset 0 0 0 1px var(--line-strong);
+}
+
+.empty-state{color:var(--pv-ink-3); padding:40px 20px; font-size:13.5px;}
+.empty-state .icn{font-size:34px;}
+.footnote{color:var(--pv-ink-3);}
+
+/* ---- no backdrop-filter: the panels are already near-opaque, just drop
+   the residual blur so nothing looks unfinished ---- */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  .card, .gate-box, .modal-box, .player-card, .status-banner, .pv-toast, .home-hero,
+  .team-card, .team-box, .chip, header.top{background:#131A28;}
+}
+@media(prefers-reduced-motion:reduce){
+  button:hover, .team-box:hover{transform:none;}
+}
+@media(max-width:575.98px){
+  :root{ --pv-r:14px; --pv-r-in:8px; }
+  .card{padding:20px;}
+  header.top{width:calc(100% - 16px); top:8px; margin-top:8px; padding:11px 14px 0; border-radius:14px;}
+  main{padding:0 8px;}
+}

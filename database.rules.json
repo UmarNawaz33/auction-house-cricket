@@ -1,0 +1,64 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "settings": {
+      ".read": true,
+      ".write": "root.child('admins').child(auth.uid).val() === true || root.child('sessions').child(auth.uid).child('role').val() === 'moderator'"
+    },
+
+    "teams": {
+      ".read": true,
+      "$teamId": {
+        ".write": "root.child('admins').child(auth.uid).val() === true || root.child('sessions').child(auth.uid).child('role').val() === 'moderator'"
+      }
+    },
+
+    "squads": {
+      ".read": true,
+      "$teamId": {
+        ".write": "root.child('admins').child(auth.uid).val() === true || root.child('sessions').child(auth.uid).child('role').val() === 'moderator'"
+      }
+    },
+
+    "players": {
+      ".read": true,
+      "$playerId": {
+        ".write": "root.child('admins').child(auth.uid).val() === true || root.child('sessions').child(auth.uid).child('role').val() === 'moderator'"
+      }
+    },
+
+    "auction": {
+      ".read": true,
+      ".write": "root.child('admins').child(auth.uid).val() === true || (root.child('sessions').child(auth.uid).child('role').val() === 'moderator' && (!newData.child('leaderTeamId').exists() || newData.child('leaderTeamId').val() === null || newData.child('leaderTeamId').val() === data.child('leaderTeamId').val())) || (root.child('sessions').child(auth.uid).child('role').val() === 'team' && newData.child('leaderTeamId').val() === root.child('sessions').child(auth.uid).child('teamId').val() && newData.child('biddingOpen').val() === true && newData.child('paused').val() !== true)"
+    },
+
+    "recentSales": {
+      ".read": true,
+      ".write": "root.child('admins').child(auth.uid).val() === true || root.child('sessions').child(auth.uid).child('role').val() === 'moderator'"
+    },
+
+    "accessKeys": {
+      ".read": "root.child('admins').child(auth.uid).val() === true",
+      "$key": {
+        ".read": "auth != null",
+        ".write": "root.child('admins').child(auth.uid).val() === true"
+      }
+    },
+
+    "sessions": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid && root.child('accessKeys').child(newData.child('key').val()).child('active').val() === true && newData.child('role').val() === root.child('accessKeys').child(newData.child('key').val()).child('role').val()"
+      }
+    },
+
+    "admins": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": false
+      }
+    }
+  }
+}
