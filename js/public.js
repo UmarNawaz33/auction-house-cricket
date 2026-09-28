@@ -63,6 +63,19 @@ let __takeoverTimer = null;        // the pending countdown tick / exit timer
 const TAKEOVER_SECONDS = 5;        // how long the card stays up, and what the timer counts from
 const TAKEOVER_EXIT_MS = 300;      // the fade-out once the timer reaches 0
 
+/* Public-view sold sound. moderator.js's hammer sound plays fine because
+   markSold() runs inside the moderator's own click — that IS the user
+   gesture browsers require before audio may play. Nobody clicks index.html;
+   it's the unattended big screen. So the sound here needs an explicit
+   one-time unlock: index.html's header has an "Enable Sound" button
+   (#soundToggle) wired to enablePublicSound() below. Declared here, not
+   lower in the file, for the same reason as the two blocks above it: the
+   `recentSales` listener a few lines down can resolve synchronously from
+   Firebase's local cache and may reach playPublicSoldSound() on its very
+   first call. */
+let publicSoldSound = null;    // the one <audio> element, reused every play — see below for why reuse matters
+let publicSoundEnabled = false; // true only after a real click has succeeded
+
 watchConnection('connBadge');
 
 db.ref('settings').on('value', s=>{ pv.settings = s.val() || pv.settings; window.__settingsCache = pv.settings; renderPublic(); });
@@ -107,10 +120,57 @@ function maybeCelebrateNewSale(sales){
   if(newestSale && saleKey(newestSale) !== __fwLastSaleKey){
     __fwLastSaleKey = saleKey(newestSale);
     if(newestSale.result === 'sold' && newestSale.via !== 'assigned'){
+      playPublicSoldSound();
       showSoldTakeover(newestSale);
       celebrateSaleFirework();
     }
   }
+}
+
+/* ---------------- Public sold sound ----------------
+   One <audio> element, reused for both the unlock and every later play —
+   NOT rebuilt each time, the way moderator.js's playSoldSound() also reuses
+   one. That reuse matters more here than there: Safari's autoplay policy is
+   element-specific, so the unlock granted by enablePublicSound()'s
+   gesture-triggered play() only carries over to a LATER programmatic
+   play() on that exact element, not to a fresh `new Audio(...)`. */
+function enablePublicSound(){
+  if(typeof Audio === 'undefined') return; // headless test context
+  try{
+    if(!publicSoldSound) publicSoldSound = new Audio('sound/sell.mp3');
+    const p = publicSoldSound.play();
+    const unlocked = () => {
+      publicSoldSound.pause();
+      publicSoldSound.currentTime = 0;
+      publicSoundEnabled = true;
+      updateSoundToggle();
+      toast('Sale sound enabled for this screen.', 'success');
+    };
+    if(p && p.then) p.then(unlocked).catch(()=>{ toast('Could not enable sound — check this tab/site isn\'t muted.', 'error'); });
+    else unlocked(); // the test stub's play() doesn't return a promise-like with .then in every case
+  }catch(e){ /* stays unenabled; the button stays offered so they can retry */ }
+}
+
+/** Reflects publicSoundEnabled onto index.html's static #soundToggle button.
+ *  That button lives in the header, outside #tabContent, so it survives
+ *  every renderPublic() re-render untouched — this is the one place that
+ *  has to update it by hand. */
+function updateSoundToggle(){
+  if(typeof document === 'undefined') return;
+  const btn = document.getElementById('soundToggle');
+  if(!btn) return;
+  if(publicSoundEnabled){ btn.textContent = 'Sound On'; btn.disabled = true; }
+}
+
+function playPublicSoldSound(){
+  if(!publicSoundEnabled) return; // never attempted before the unlock click — an unlocked-but-blocked play() can log a console warning per browser
+  if(typeof Audio === 'undefined') return;
+  try{
+    if(!publicSoldSound) publicSoldSound = new Audio('sound/sell.mp3');
+    publicSoldSound.currentTime = 0;
+    const p = publicSoldSound.play();
+    if(p && p.catch) p.catch(()=>{});
+  }catch(e){ /* audio is decoration; never block the takeover on it */ }
 }
 
 /* ---------------- Sold takeover ----------------

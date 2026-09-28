@@ -69,13 +69,17 @@ function ctxFor(files, opts){
     isNaN, parseInt, parseFloat, Set, Promise, Error,
     URL: { createObjectURL: () => 'blob:x', revokeObjectURL(){} },
     Blob: function(){},
-    // Enough of HTMLAudioElement for the sold-hammer sound in moderator.js:
-    // records what was played so a test can assert it fired (and, just as
-    // importantly, that it did NOT fire on unsold/assign).
+    // Enough of HTMLAudioElement for the sold-hammer sound in moderator.js
+    // and public.js's click-to-unlock sold sound: records what was played so
+    // a test can assert it fired (and, just as importantly, that it did NOT
+    // fire on unsold/assign) — and takes .pause(), which the public-view
+    // unlock calls right after play() to reset the element without it being
+    // audible. A no-op here, since the stub never actually plays anything.
     Audio: function(src){
       this.src = src;
       this.currentTime = 0;
       this.play = () => { audio.push(src); return Promise.resolve(); };
+      this.pause = () => {};
     },
   };
   sandbox.window = sandbox;
