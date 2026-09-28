@@ -53,6 +53,7 @@ async function run(){
     check('  row has name/team/price', sale && sale.name === 'Kohli' && sale.team === 'Lions' && sale.price === 18);
     check('  row has photo + category', sale && sale.image === 'images/k.jpg' && sale.category === 'Batsman');
     check('  row result = sold', sale && sale.result === 'sold');
+    check('hammer sound played', ctx.__audio.length === 1 && ctx.__audio[0] === 'sound/sell.mp3');
     const auc = (find(w, 'update', 'auction') || {}).value || {};
     check('holds for Next Player', auc.awaitingNext === true);
     check('bidding closed in between', auc.biddingOpen === false);
@@ -66,6 +67,7 @@ async function run(){
     check('not added to any squad', !Object.keys(root).some(k => k.startsWith('squads/')));
     check('logged as unsold', root['recentSales/p1'] && root['recentSales/p1'].result === 'unsold');
     check('no team / price on row', root['recentSales/p1'].team === null && root['recentSales/p1'].price === null);
+    check('no hammer sound — nothing was sold', ctx.__audio.length === 0);
     const auc = (find(w, 'update', 'auction') || {}).value || {};
     check('holds for Next Player', auc.awaitingNext === true);
   });
@@ -276,6 +278,9 @@ async function run(){
     check('added to that team\'s squad', root['squads/t2/p1'] && root['squads/t2/p1'].price === 40);
     const sale = root['recentSales/p1'];
     check('logged in the results table like a real sale', sale && sale.result === 'sold' && sale.team === 'Tigers' && sale.price === 40);
+    // the hammer is for the auction floor; a pre-auction retain/assign is
+    // paperwork, so it stays silent (same distinction the fireworks make)
+    check('no hammer sound — assign is not an auction sale', ctx.__audio.length === 0);
   });
 
   await scenario(suite, 'ASSIGN refuses a team that cannot afford it', `

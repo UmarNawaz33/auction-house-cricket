@@ -11,6 +11,7 @@
      ctx.__toasts    — every toast(msg,type) call, as [type, msg]
      ctx.__signOuts  — one entry per real auth.signOut() *call* (pushed
                        synchronously at call time, before the promise settles)
+     ctx.__audio     — one entry per Audio.play() call, as the src string
      ctx.__auth      — control surface for the Firebase Auth stub; see below
    All reset per call to ctxFor(); nothing persists between tests.
 
@@ -52,6 +53,7 @@ function ctxFor(files){
   const writes = [];
   const toasts = [];
   const signOuts = []; // one entry per real auth.signOut() call
+  const audio = [];    // one src per play() call
   const elCache = {};
 
   const sandbox = {
@@ -60,6 +62,14 @@ function ctxFor(files){
     isNaN, parseInt, parseFloat, Set, Promise, Error,
     URL: { createObjectURL: () => 'blob:x', revokeObjectURL(){} },
     Blob: function(){},
+    // Enough of HTMLAudioElement for the sold-hammer sound in moderator.js:
+    // records what was played so a test can assert it fired (and, just as
+    // importantly, that it did NOT fire on unsold/assign).
+    Audio: function(src){
+      this.src = src;
+      this.currentTime = 0;
+      this.play = () => { audio.push(src); return Promise.resolve(); };
+    },
   };
   sandbox.window = sandbox;
   sandbox.document = {
@@ -160,6 +170,7 @@ function ctxFor(files){
   ctx.__toasts = toasts;
   ctx.__writes = writes;
   ctx.__signOuts = signOuts;
+  ctx.__audio = audio;
   ctx.__auth = {
     setCurrentUser(user){ currentUser = user; },
     get persistenceCalls(){ return persistenceCalls; },

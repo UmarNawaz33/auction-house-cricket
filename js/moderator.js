@@ -764,11 +764,35 @@ async function holdForNext(record, extra){
 
 async function resetBid(){ await db.ref('auction').update({currentPrice:0, leaderTeamId:null}); }
 
+/* The hammer sound for a completed sale.
+   Two things decide how this is written:
+   1. Browsers only allow audio after a user gesture. The moderator's click
+      IS that gesture, so play() has to be reached synchronously from the
+      handler — after an `await` the activation may be gone and play()
+      rejects silently. That's why markSold() fires this before its writes.
+   2. One reused Audio element, rewound each time, so back-to-back sales
+      retrigger the sound instead of stacking up new downloads.
+   A blocked or missing sound must never take the sale down with it, hence
+   the catch on both the constructor and the play() promise. */
+let soldSound = null;
+function playSoldSound(){
+  if(typeof Audio === 'undefined') return; // headless test context
+  try{
+    if(!soldSound) soldSound = new Audio('sound/sell.mp3');
+    soldSound.currentTime = 0;
+    const p = soldSound.play();
+    if(p && p.catch) p.catch(()=>{});
+  }catch(e){ /* audio is decoration; never block the sale on it */ }
+}
+
 async function markSold(){
   const auc = mstate.auction;
   const player = getPlayer(auc.currentPlayerId);
   const team = getTeam(auc.leaderTeamId);
   if(!player || !team) return;
+  // after the guards (the sale is definitely happening) but before the first
+  // await, so the click still counts as the gesture that unlocks audio
+  playSoldSound();
   const price = auc.currentPrice || player.basePrice;
   const updates = {};
   updates['players/'+player.id+'/status'] = 'sold';

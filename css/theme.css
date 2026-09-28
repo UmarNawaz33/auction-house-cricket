@@ -58,18 +58,29 @@
 }
 
 /* ---- backdrop ----
-   A near-black navy base with two faint, static glows (brand gold, top;
-   winning-bid green, lower corner) instead of six saturated rainbow orbs —
-   enough depth to keep the page from feeling flat, not enough to compete
-   with the panels sitting on top of it. */
+   One warm light source overhead — like floodlights over a night match —
+   fading into a near-black sky, plus a faint green glow low on the page
+   (turf catching the light). One coherent light source reads more
+   considered than scattered decorative orbs, and ties the backdrop to the
+   subject rather than being generic dashboard chrome. A soft vignette at
+   the far corners adds depth without drawing attention to itself. */
 body{
   background:
-    radial-gradient(60rem 42rem at 18% -12%, rgba(228,174,73,.10), transparent 60%),
-    radial-gradient(54rem 46rem at 96% 108%, rgba(48,209,88,.07), transparent 62%),
-    #060810
+    radial-gradient(60% 55% at 50% -18%, rgba(228,174,73,.16), transparent 62%),
+    radial-gradient(70% 46% at 50% 122%, rgba(48,209,88,.06), transparent 65%),
+    radial-gradient(120% 120% at 50% 40%, transparent 55%, rgba(0,0,0,.3) 100%),
+    #070B10
     fixed;
   background-attachment:fixed;
   color:var(--pv-ink);
+}
+/* a whisper of film grain so the flat dark surface reads as material
+   rather than a flat vector fill — fixed above everything, but inert */
+body::before{
+  content:'';
+  position:fixed; inset:0; z-index:9999; pointer-events:none;
+  opacity:.05; mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 ::selection{background:rgba(228,174,73,.35); color:#1A1000;}
 a{color:var(--pv-blue-l);}
