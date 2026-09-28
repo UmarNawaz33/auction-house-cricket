@@ -37,6 +37,23 @@ auth.onAuthStateChanged(async user=>{
         saveSession(adminState.session);
         attachAdminListeners();
       }
+    } else if(adminState.session && (!user || user.isAnonymous)){
+      /* Firebase has dropped or replaced the organizer's credential while
+         this page stayed open. The usual cause is another tab of the same
+         browser: a moderator/team key login calls ensureAnonymousAuth(),
+         which must switch the shared Auth instance to SESSION persistence to
+         scope itself to that tab — and switching persistence migrates the
+         current user out of the shared storage the admin tab was relying on.
+
+         This branch did not exist, and its absence is what made the panel
+         feel broken: adminState.session is plain page state, so the console
+         went on rendering as "signed in" while auth.uid was null or
+         anonymous. Every write then failed the Database Rules
+         (accessKeys/$key requires admins/<auth.uid> === true), so buttons
+         like "Generate key" did nothing at all. Say so and show the login. */
+      adminState.session = null;
+      clearSession();
+      toast('Your organizer sign-in ended in this browser — sign in again to continue.', 'error');
     }
   }catch(e){
     console.error('Admin auth check failed:', e);
@@ -95,7 +112,7 @@ function renderLogin(){
       <h2>Organizer Sign In</h2>
       <p class="sub">Real Firebase email &amp; password account — this is the one login that isn't a shareable key. See README → "Creating the first admin" if you haven't set one up yet.</p>
       <div class="field" style="text-align:left;"><label>Email</label><input type="text" id="admEmail" placeholder="you@example.com" style="text-transform:none;letter-spacing:normal;font-family:var(--font-body);"></div>
-      <div class="field" style="text-align:left;"><label>Password</label><input type="password" id="admPass" style="text-transform:none;letter-spacing:normal;font-family:var(--font-body);"></div>
+      <div class="field" style="text-align:left;"><label>Password</label><input type="password" placeholder="password" id="admPass" style="text-transform:none;letter-spacing:normal;font-family:var(--font-body);"></div>
       <button class="primary block" onclick="doAdminLogin()">Sign In</button>
       <div class="gate-error" id="admErr"></div>
     </div>
@@ -166,10 +183,24 @@ function renderKeys(){
   `;
 }
 
+/* Every accessKeys write is gated server-side on admins/<auth.uid> === true.
+   Without this, a rejected write just became an unhandled promise rejection:
+   the success toast never ran and the click looked like it did nothing, which
+   is far more confusing than an error. Name the actual remedy instead. */
+function adminActionError(e){
+  const msg = (e && e.message) || '';
+  if(/permission[_ ]?denied/i.test(msg)){
+    return 'Not saved — this browser is no longer signed in as the organizer. Sign in again, then retry.';
+  }
+  return 'Not saved: ' + (msg || 'unknown error');
+}
+
 async function createModeratorKey(){
   const label = document.getElementById('modLabel').value.trim();
   const key = genKeyString('moderator');
-  await db.ref('accessKeys/'+key).set({role:'moderator', teamId:null, label, active:true, createdAt:Date.now()});
+  try{
+    await db.ref('accessKeys/'+key).set({role:'moderator', teamId:null, label, active:true, createdAt:Date.now()});
+  }catch(e){ toast(adminActionError(e), 'error'); return; }
   toast('Moderator key created: '+key, 'success');
   document.getElementById('modLabel').value='';
 }
@@ -178,12 +209,22 @@ async function createTeamKey(){
   const label = document.getElementById('teamKeyLabel').value.trim();
   if(!teamId){ toast('Select a team first.', 'error'); return; }
   const key = genKeyString('team');
-  await db.ref('accessKeys/'+key).set({role:'team', teamId, label, active:true, createdAt:Date.now()});
+  try{
+    await db.ref('accessKeys/'+key).set({role:'team', teamId, label, active:true, createdAt:Date.now()});
+  }catch(e){ toast(adminActionError(e), 'error'); return; }
   toast('Team key created: '+key, 'success');
   document.getElementById('teamKeyLabel').value='';
 }
-async function revokeKey(key){ await db.ref('accessKeys/'+key+'/active').set(false); toast('Key revoked.'); }
-async function reactivateKey(key){ await db.ref('accessKeys/'+key+'/active').set(true); toast('Key reactivated.', 'success'); }
+async function revokeKey(key){
+  try{ await db.ref('accessKeys/'+key+'/active').set(false); }
+  catch(e){ toast(adminActionError(e), 'error'); return; }
+  toast('Key revoked.');
+}
+async function reactivateKey(key){
+  try{ await db.ref('accessKeys/'+key+'/active').set(true); }
+  catch(e){ toast(adminActionError(e), 'error'); return; }
+  toast('Key reactivated.', 'success');
+}
 
 function confirmDeleteKey(key){
   const k = adminState.keys[key] || {};

@@ -12,6 +12,11 @@
      ctx.__signOuts  — one entry per real auth.signOut() *call* (pushed
                        synchronously at call time, before the promise settles)
      ctx.__audio     — one entry per Audio.play() call, as the src string
+     ctx.__appInits  — one entry per firebase.initializeApp(), by app name
+                       ('[DEFAULT]' when called without one). Pass
+                       ctxFor(files, {pvApp:'admin'}) to load the files as if
+                       <html data-pv-app="admin"> — i.e. as admin.html, which
+                       must get its OWN Firebase instance.
      ctx.__auth      — control surface for the Firebase Auth stub; see below
    All reset per call to ctxFor(); nothing persists between tests.
 
@@ -49,11 +54,13 @@ function makeEl(){
  * Build a fresh VM context with the given files (paths relative to the repo
  * root, e.g. 'js/shared.js') evaluated into it in order.
  */
-function ctxFor(files){
+function ctxFor(files, opts){
+  const o = opts || {};
   const writes = [];
   const toasts = [];
   const signOuts = []; // one entry per real auth.signOut() call
   const audio = [];    // one src per play() call
+  const appInits = []; // one entry per firebase.initializeApp(), by app name
   const elCache = {};
 
   const sandbox = {
@@ -78,7 +85,15 @@ function ctxFor(files){
     querySelector: () => makeEl(),
     body: { appendChild(){} },
     head: { appendChild(){} },
-    documentElement: { setAttribute(){}, classList: { add(){} } },
+    // getAttribute: shared.js reads data-pv-app here to decide whether this
+    // page gets its own named Firebase app. Default null = the default app,
+    // which is what three of the four pages use; pass {pvApp:'admin'} to
+    // ctxFor to simulate admin.html.
+    documentElement: {
+      setAttribute(){},
+      getAttribute(name){ return name === 'data-pv-app' ? (o.pvApp || null) : null; },
+      classList: { add(){} },
+    },
   };
 
   function ref(refPath){
@@ -151,7 +166,7 @@ function ctxFor(files){
   };
 
   sandbox.firebase = {
-    initializeApp(){},
+    initializeApp(config, name){ appInits.push(name === undefined ? '[DEFAULT]' : name); },
     auth: Object.assign(() => authObj, {
       Auth: { Persistence: { SESSION: 'SESSION', LOCAL: 'LOCAL', NONE: 'NONE' } },
     }),
@@ -171,8 +186,16 @@ function ctxFor(files){
   ctx.__writes = writes;
   ctx.__signOuts = signOuts;
   ctx.__audio = audio;
+  ctx.__appInits = appInits;
   ctx.__auth = {
     setCurrentUser(user){ currentUser = user; },
+    /** Push a NEW auth state to listeners already registered — i.e. what
+     *  Firebase does to an open page when the credential changes underneath
+     *  it (token revoked, signed out in another tab, or another tab's
+     *  moderator/team login replacing the shared Auth user). setCurrentUser
+     *  only seeds state BEFORE listeners run; this simulates the change
+     *  arriving afterwards. */
+    emitUser(user){ currentUser = user; notifyAuthListeners(); },
     get persistenceCalls(){ return persistenceCalls; },
     holdSignOut(){
       let release;

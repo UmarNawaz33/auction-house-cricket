@@ -47,6 +47,59 @@ async function run(){
     suite.check('admin ' + tab + ' tab renders while paused+completed', typeof out === 'string' && out.trim().length > 0);
   }
 
+  /* The organizer kept having to sign out and back in before keys would
+     generate. Cause: adminState.session is page state, so when Firebase
+     dropped or swapped the credential underneath an open tab (typically a
+     moderator/team login in another tab switching the shared Auth instance
+     to an anonymous user), the console still rendered as signed in while
+     every accessKeys write was rejected by the Database Rules — silently,
+     because the writes had no catch. Both halves are covered here. */
+  suite.section('a credential lost underneath an open admin tab');
+  const SIGNED_IN = `adminState={session:{role:'admin',uid:'admin-1',label:'me@x.com'},
+    settings:{currencyUnit:'Cr',minPlayersPerTeam:0,maxPlayersPerTeam:5,defaultBasePrice:1,bidIncrement:1},
+    teams:{},players:{},auction:{},sales:[],keys:{}};`;
+  {
+    const c = ctxFor(['js/shared.js', 'js/admin.js']);
+    evalIn(c, SIGNED_IN);
+
+    evalIn(c, `__auth.emitUser({uid:'anon-9', isAnonymous:true});`);
+    await new Promise(r => setImmediate(r)); // the handler is async
+    suite.check('anonymous takeover clears the stale admin session',
+      evalIn(c, 'adminState.session === null'));
+    suite.check('  and says so rather than failing silently',
+      c.__toasts.some(([type, msg]) => type === 'error' && /sign in again/i.test(msg)));
+    suite.check('  and falls back to the login screen',
+      /Organizer Sign In/.test(c.document.getElementById('tabContent').innerHTML));
+  }
+  {
+    const c = ctxFor(['js/shared.js', 'js/admin.js']);
+    evalIn(c, SIGNED_IN);
+    evalIn(c, `__auth.emitUser(null);`);
+    await new Promise(r => setImmediate(r));
+    suite.check('a dropped credential clears it too',
+      evalIn(c, 'adminState.session === null'));
+  }
+
+  suite.section('a rejected key write reports instead of doing nothing');
+  {
+    const c = ctxFor(['js/shared.js', 'js/admin.js']);
+    evalIn(c, SIGNED_IN);
+    await new Promise(r => setImmediate(r)); // let the load-time auth listener settle
+    evalIn(c, SIGNED_IN + `
+      document.getElementById('modLabel').value = 'Main desk';
+      // what the Rules return once auth.uid is no longer an admin
+      db.ref = function(){ return { set(){ return Promise.reject(new Error('PERMISSION_DENIED: Permission denied')); } }; };
+    `);
+    c.__toasts.length = 0; // only interested in what the write itself reports
+    await evalIn(c, 'createModeratorKey()');
+    const errs = c.__toasts.filter(([type]) => type === 'error');
+    suite.check('createModeratorKey surfaces the refusal', errs.length === 1);
+    suite.check('  message names the remedy, not the error code',
+      errs.length === 1 && /sign in again/i.test(errs[0][1]) && !/PERMISSION_DENIED/.test(errs[0][1]));
+    suite.check('  and does NOT claim the key was created',
+      !c.__toasts.some(([type, msg]) => type === 'success' && /key created/i.test(msg)));
+  }
+
   suite.section('moderator-only functions absent from admin.js');
   for (const fn of ['pauseSession', 'pauseBidding', 'resumeSession', 'completeBidding', 'reopenAuction', 'armDisconnectPause']){
     suite.check('admin page has no ' + fn + '()', evalIn(ctx, 'typeof ' + fn) === 'undefined');

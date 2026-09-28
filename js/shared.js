@@ -5,9 +5,34 @@
    Loaded AFTER: firebase SDK scripts + firebase-config.js
    ============================================================ */
 
-firebase.initializeApp(window.FIREBASE_CONFIG);
-const auth = firebase.auth();
-const db = firebase.database();
+/* Which Firebase app instance this page gets.
+
+   A page can opt into its OWN named instance with data-pv-app on <html>;
+   admin.html is the only one that does. Everything else shares the default.
+
+   Why that matters, from Firebase's auth-state-persistence docs: "if one tab
+   switches from local to session persistence, other tabs using local
+   persistence will have that user signed out." adminLogin() relies on the
+   default LOCAL persistence, while ensureAnonymousAuth() MUST switch to
+   SESSION so a moderator/team key stays scoped to its own tab — so opening
+   moderator.html or team.html used to sign the organizer out of admin.html
+   mid-session, and every key write then failed the Database Rules.
+
+   Firebase namespaces auth storage per instance
+   (firebase:authUser:<apiKey>:<appName>) and applies that one-persistence-
+   type-at-a-time rule WITHIN an instance, so giving admin its own instance
+   lets the two sessions coexist. This is purely a client-side SDK split:
+   same project, same config, same rules — nothing changes server-side.
+
+   `auth` and `db` keep their names, so no other file needs to know. Anything
+   that reaches for firebase.auth()/firebase.database() directly instead of
+   these two would silently land back on the default app — don't. */
+const PV_APP_NAME = document.documentElement.getAttribute('data-pv-app') || '';
+const pvApp = PV_APP_NAME
+  ? firebase.initializeApp(window.FIREBASE_CONFIG, PV_APP_NAME)
+  : firebase.initializeApp(window.FIREBASE_CONFIG);
+const auth = firebase.auth(pvApp);
+const db = firebase.database(pvApp);
 
 const SESSION_KEY = 'auction_session_v1';
 

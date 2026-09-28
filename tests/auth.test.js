@@ -9,11 +9,39 @@
    Run this after touching: js/shared.js's ensureAnonymousAuth()/signOutAll(),
    or any page's doSignOut().
    ============================================================ */
-const { ctxFor, evalIn } = require('./lib/dom-stub');
+const fs = require('fs');
+const path = require('path');
+const { ctxFor, evalIn, ROOT } = require('./lib/dom-stub');
 const { makeSuite, printSummary } = require('./lib/suite');
 
 async function run(){
   const suite = makeSuite('auth');
+
+  /* The organizer kept getting signed out of admin.html mid-session, because
+     a moderator/team key login in another tab switches the SHARED Firebase
+     app to SESSION persistence, and Firebase signs out other tabs holding a
+     LOCAL-persisted user on that same instance. admin.html therefore runs in
+     its own named app so the two sessions can coexist. Both halves of that
+     wiring are asserted here: shared.js must honour the attribute, AND
+     admin.html must actually carry it — the branch is dead without it. */
+  suite.section('admin.html runs in its own Firebase app instance');
+  {
+    const def = ctxFor(['js/shared.js']);
+    suite.check('a page without data-pv-app uses the default app',
+      def.__appInits.join(',') === '[DEFAULT]', 'got ' + def.__appInits.join(','));
+
+    const adm = ctxFor(['js/shared.js'], { pvApp: 'admin' });
+    suite.check('data-pv-app="admin" initialises a named app instead',
+      adm.__appInits.join(',') === 'admin', 'got ' + adm.__appInits.join(','));
+
+    const html = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
+    suite.check('admin.html actually carries data-pv-app="admin"',
+      /<html[^>]*\sdata-pv-app=["']admin["']/.test(html('admin.html')));
+    for (const page of ['index.html', 'moderator.html', 'team.html']){
+      suite.check('  ' + page + ' stays on the default app',
+        !/\sdata-pv-app=/.test(html(page)));
+    }
+  }
 
   suite.section('ensureAnonymousAuth: reuses an existing anonymous user');
   {
@@ -83,12 +111,18 @@ async function run(){
     suite.check('resolves once signOut actually completes', resolved === true);
   }
 
-  /** Shared shape for the three doSignOut() scenarios below. */
-  async function checkDoSignOutAwaits(suite, label, files, seed, sessionVarExpr){
+  /** Shared shape for the three doSignOut() scenarios below.
+   *  `user` is who Firebase currently has signed in; it defaults to an
+   *  anonymous user because that is what a moderator/team key login produces.
+   *  admin.js passes a real one instead: it now discards a session whose
+   *  credential is missing or anonymous, so pairing an admin session with an
+   *  anonymous user would be an incoherent state it rightly throws away
+   *  before the sign-out under test even starts. */
+  async function checkDoSignOutAwaits(suite, label, files, seed, sessionVarExpr, user){
     suite.section(label);
     const ctx = ctxFor(files);
     evalIn(ctx, seed);
-    ctx.__auth.setCurrentUser({ uid: 'anon-1', isAnonymous: true });
+    ctx.__auth.setCurrentUser(user || { uid: 'anon-1', isAnonymous: true });
     const release = ctx.__auth.holdSignOut();
     const p = evalIn(ctx, 'doSignOut()');
     await Promise.resolve(); await Promise.resolve();
@@ -103,8 +137,9 @@ async function run(){
   await checkDoSignOutAwaits(
     suite, 'admin.js doSignOut() awaits sign-out before clearing its session',
     ['js/shared.js', 'js/admin.js'],
-    `adminState.session = {role:'admin', label:'me@x.com'};`,
-    'adminState.session'
+    `adminState.session = {role:'admin', uid:'admin-1', label:'me@x.com'};`,
+    'adminState.session',
+    { uid: 'admin-1', isAnonymous: false }
   );
 
   await checkDoSignOutAwaits(
