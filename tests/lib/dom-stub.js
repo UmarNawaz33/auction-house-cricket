@@ -83,6 +83,9 @@ function ctxFor(files, opts){
     getElementById: (id) => (elCache[id] = elCache[id] || makeEl()),
     createElement: () => makeEl(),
     querySelector: () => makeEl(),
+    // public.js's sold takeover listens for Escape while it's on screen
+    addEventListener(){},
+    removeEventListener(){},
     body: { appendChild(){} },
     head: { appendChild(){} },
     // getAttribute: shared.js reads data-pv-app here to decide whether this

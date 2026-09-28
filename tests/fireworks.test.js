@@ -3,7 +3,10 @@
    js/public.js must fire ONLY for a genuinely new, real live-auction sale:
    never on first page load, never for a repeat render of the same sale,
    never for 'unsold', and never for the moderator's pre-auction "Assign"
-   action (tagged `via:'assigned'` in shared.js's saleRecord()).
+   action (tagged `via:'assigned'` in shared.js's saleRecord()). It DOES fire
+   again when the same player is released and re-sold: sales are keyed by
+   player id so the row is overwritten, and only its id + time distinguish the
+   new sale from the old one.
 
    `maybeCelebrateNewSale()` is the standalone function public.js's
    `recentSales` listener calls — tested directly here rather than via a
@@ -27,10 +30,16 @@ function run(){
   `);
   const calls = () => evalIn(ctx, 'window.__celebrations.length');
 
-  const auctionSale = (id, name) => `{id:'${id}', name:'${name}', result:'sold', via:'auction', team:'Lions', price:20, time:${Date.now()}}`;
-  const legacySale  = (id, name) => `{id:'${id}', name:'${name}', result:'sold', team:'Lions', price:20, time:${Date.now()}}`; // no `via` at all — pre-existing data written before this field existed
-  const assignedSale = (id, name) => `{id:'${id}', name:'${name}', result:'sold', via:'assigned', team:'Lions', price:20, time:${Date.now()}}`;
-  const unsoldEntry = (id, name) => `{id:'${id}', name:'${name}', result:'unsold', team:null, price:null, time:${Date.now()}}`;
+  // A sale's `time` is part of what identifies it (see saleKey() in public.js),
+  // so each id gets one FIXED time. Re-rendering a sale hands back the stored
+  // row byte-for-byte; building it with a fresh Date.now() each call made
+  // "the same sale" differ by a millisecond about 1 run in 9 — a flaky test.
+  // `at` overrides it to model a genuine re-sale, which is stamped anew.
+  const timeOf = (id) => 1000 * parseInt(id.slice(1), 10);
+  const auctionSale = (id, name, at) => `{id:'${id}', name:'${name}', result:'sold', via:'auction', team:'Lions', price:20, time:${at || timeOf(id)}}`;
+  const legacySale  = (id, name, at) => `{id:'${id}', name:'${name}', result:'sold', team:'Lions', price:20, time:${at || timeOf(id)}}`; // no `via` at all — pre-existing data written before this field existed
+  const assignedSale = (id, name, at) => `{id:'${id}', name:'${name}', result:'sold', via:'assigned', team:'Lions', price:20, time:${at || timeOf(id)}}`;
+  const unsoldEntry = (id, name, at) => `{id:'${id}', name:'${name}', result:'unsold', team:null, price:null, time:${at || timeOf(id)}}`;
 
   suite.section('never fires on the very first snapshot (page load)');
   evalIn(ctx, `maybeCelebrateNewSale([${auctionSale('s1', 'Kohli')}]);`);
@@ -59,6 +68,23 @@ function run(){
   suite.section('a genuinely new auction sale right after an assigned one still celebrates');
   evalIn(ctx, `maybeCelebrateNewSale([${auctionSale('s6', 'Siraj')}, ${assignedSale('s5', 'Gill')}]);`);
   suite.check('celebrates (now 3 total)', calls() === 3);
+
+  suite.section('re-selling the SAME player (released, then sold again) celebrates');
+  // Sales are keyed by player id, so the second sale OVERWRITES the first row:
+  // same id, but saleRecord() stamps a fresh time. This used to be silent.
+  const before = calls();
+  evalIn(ctx, `maybeCelebrateNewSale([${auctionSale('s6', 'Siraj', 99000)}, ${assignedSale('s5', 'Gill')}])`);
+  suite.check('the re-sold player celebrates again', calls() === before + 1, 'before ' + before + ', after ' + calls());
+  evalIn(ctx, `maybeCelebrateNewSale([${auctionSale('s6', 'Siraj', 99000)}, ${assignedSale('s5', 'Gill')}])`);
+  suite.check('  and re-rendering that re-sale does not fire it a third time', calls() === before + 1);
+  evalIn(ctx, `maybeCelebrateNewSale([${auctionSale('s6', 'Siraj', 120000)}, ${assignedSale('s5', 'Gill')}])`);
+  suite.check('  a second re-sale of the same player fires again too', calls() === before + 2);
+
+  suite.section('a re-sale that turns out to be an UNSOLD or an ASSIGN stays silent');
+  evalIn(ctx, `maybeCelebrateNewSale([${unsoldEntry('s6', 'Siraj', 130000)}, ${assignedSale('s5', 'Gill')}])`);
+  suite.check('same player, now unsold: no celebration', calls() === before + 2);
+  evalIn(ctx, `maybeCelebrateNewSale([${assignedSale('s6', 'Siraj', 140000)}, ${assignedSale('s5', 'Gill')}])`);
+  suite.check('same player, now retained via Assign: no celebration', calls() === before + 2);
 
   suite.section('an empty results log (fresh database) never throws or celebrates');
   const freshCtx = ctxFor(['js/shared.js', 'js/public.js']);

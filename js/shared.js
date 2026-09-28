@@ -155,6 +155,14 @@ function showModal(html){
 function closeModal(){ const r=document.getElementById('modalRoot'); if(r) r.innerHTML=''; }
 function escapeAttr(s){ return (s||'').replace(/"/g,'&quot;'); }
 
+/** Escape text for use as HTML content. escapeAttr above only handles the
+ *  double quote, which is not enough for text placed between tags. */
+function escapeHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 /* ---------------- Player photos ----------------
    Photos are ordinary files committed to the repo's images/ folder, and
    Firebase only stores the relative path (e.g. "images/kohli.jpg"). That

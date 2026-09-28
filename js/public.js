@@ -53,7 +53,15 @@ function togglePastResults(){ showPastResults = !showPastResults; renderPublic()
 // Firebase's local cache, and a `let` referenced before its own declaration
 // line throws — this bit a browser test the first time round.
 let __fwSeenFirstSnapshot = false; // true once we've seen one recentSales snapshot
-let __fwLastSaleId = null;         // newest sale id we've already reacted to
+let __fwLastSaleKey = null;        // newest sale (id + time) we've already reacted to
+
+// Sold takeover state. Same rule as the two above: declared here, before the
+// `recentSales` listener, because that listener can run synchronously from
+// Firebase's local cache and reaches showSoldTakeover() on its first call.
+let __takeoverEl = null;           // the overlay currently on screen, if any
+let __takeoverTimer = null;        // the pending countdown tick / exit timer
+const TAKEOVER_SECONDS = 5;        // how long the card stays up, and what the timer counts from
+const TAKEOVER_EXIT_MS = 300;      // the fade-out once the timer reaches 0
 
 watchConnection('connBadge');
 
@@ -75,24 +83,118 @@ db.ref('recentSales').on('value', s=>{
 /**
  * TEMP FIREWORKS hook (piece 2 of 3 — see the "TEMPORARY FEATURE" block near
  * the foot of this file for the rest and how to remove it). Fires once per
- * genuinely new sale (compares Firebase push-key ids, not just re-renders),
- * never on the page's first load, and only for a real live auction sale —
- * not the moderator's pre-auction "Assign" action, which tags its row
- * `via:'assigned'` for exactly this check. Pulled out of the `recentSales`
- * listener as its own function so it's directly testable without needing to
- * fake a Firebase snapshot event.
+ * genuinely new sale (not just a re-render), never on the page's first load,
+ * and only for a real live auction sale — not the moderator's pre-auction
+ * "Assign" action, which tags its row `via:'assigned'` for exactly this
+ * check. Pulled out of the `recentSales` listener as its own function so it's
+ * directly testable without needing to fake a Firebase snapshot event.
+ *
+ * "Same sale" means same id AND same time. Sales are keyed by player id, so
+ * releasing a player and re-selling them OVERWRITES their one row instead of
+ * adding another; an id-only comparison saw an unchanged id and stayed silent
+ * for the re-sale. saleRecord() stamps a fresh `time: Date.now()` on every
+ * write, so id + time identifies one specific sale event.
  */
+function saleKey(sale){ return sale ? sale.id + ':' + (sale.time || 0) : null; }
+
 function maybeCelebrateNewSale(sales){
   const newestSale = sales[0];
   if(!__fwSeenFirstSnapshot){
     __fwSeenFirstSnapshot = true;
-    __fwLastSaleId = newestSale ? newestSale.id : null;
+    __fwLastSaleKey = saleKey(newestSale);
     return;
   }
-  if(newestSale && newestSale.id !== __fwLastSaleId){
-    __fwLastSaleId = newestSale.id;
-    if(newestSale.result === 'sold' && newestSale.via !== 'assigned') celebrateSaleFirework();
+  if(newestSale && saleKey(newestSale) !== __fwLastSaleKey){
+    __fwLastSaleKey = saleKey(newestSale);
+    if(newestSale.result === 'sold' && newestSale.via !== 'assigned'){
+      showSoldTakeover(newestSale);
+      celebrateSaleFirework();
+    }
   }
+}
+
+/* ---------------- Sold takeover ----------------
+   When a real auction sale lands, the whole screen becomes the result: the
+   player, the team, the price. This is the moment the room is waiting for, so
+   it should not depend on anyone glancing at a corner of the page.
+
+   It rides the SAME gate as the fireworks (maybeCelebrateNewSale above): once
+   per genuinely new sale, never on first load, never for unsold, never for the
+   moderator's pre-auction "Assign". It is a permanent feature and is
+   independent of TEMP_FIREWORKS_ENABLED.
+
+   It stays up TAKEOVER_SECONDS (5). A circular timer in the top-right corner
+   counts 5 → 0 so the room knows how long is left; at 0 the card fades out
+   over TAKEOVER_EXIT_MS. Tap or Escape closes it early.
+
+   The number and the close are driven by ONE chain of 1-second timeouts
+   (tickSoldTakeover), so the digit on screen and the moment the card goes
+   can't disagree. The ring around it is a CSS animation of the same length —
+   purely visual, so a throttled timer can at worst make the ring and number
+   drift by a fraction of a second, never change when the card closes. (A
+   setInterval / wall-clock stop condition was rejected for the same reason
+   the fireworks avoid one: see CLAUDE.md §7a.)
+
+   The markup builder is separate from the DOM code so it can be tested as a
+   plain string. Every value that came from the database is escaped. */
+function soldTakeoverMarkup(sale){
+  const s = sale || {};
+  return `
+  <div class="pv-takeover-timer" aria-hidden="true">
+    <svg class="pv-takeover-ring" viewBox="0 0 56 56" focusable="false">
+      <circle class="pv-takeover-ring-bg" cx="28" cy="28" r="24"/>
+      <circle class="pv-takeover-ring-fg" cx="28" cy="28" r="24" style="animation-duration:${TAKEOVER_SECONDS}s; --pv-take-steps:${TAKEOVER_SECONDS}"/>
+    </svg>
+    <span class="pv-takeover-count" id="pvTakeoverCount">${TAKEOVER_SECONDS}</span>
+  </div>
+  <div class="pv-takeover-card">
+    <div class="pv-takeover-stamp">Sold</div>
+    <img class="pv-takeover-photo" src="${escapeAttr(playerImageSrc({image:s.image}))}" alt=""
+         onerror="this.onerror=null;this.src='${DEFAULT_PLAYER_IMAGE}';">
+    <div class="pv-takeover-name">${escapeHtml(s.name || 'Player')}</div>
+    <div class="pv-takeover-to">to <strong>${escapeHtml(s.team || 'a team')}</strong></div>
+    <div class="pv-bid pv-takeover-price">${money(s.price)}</div>
+    <div class="pv-takeover-hint">Tap anywhere to close</div>
+  </div>`;
+}
+
+function dismissSoldTakeover(){
+  if(__takeoverTimer){ clearTimeout(__takeoverTimer); __takeoverTimer = null; }
+  if(__takeoverEl){ __takeoverEl.remove(); __takeoverEl = null; }
+  if(typeof document !== 'undefined' && document.removeEventListener){
+    document.removeEventListener('keydown', onTakeoverKey);
+  }
+}
+function onTakeoverKey(e){ if(e && e.key === 'Escape') dismissSoldTakeover(); }
+
+function showSoldTakeover(sale){
+  if(typeof document === 'undefined') return;
+  dismissSoldTakeover(); // a second sale right behind the first replaces it
+  const el = document.createElement('div');
+  el.className = 'pv-takeover';
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-live', 'polite');
+  el.setAttribute('onclick', 'dismissSoldTakeover()');
+  el.innerHTML = soldTakeoverMarkup(sale);
+  document.body.appendChild(el);
+  __takeoverEl = el;
+  document.addEventListener('keydown', onTakeoverKey);
+  // the markup already shows TAKEOVER_SECONDS; the first tick is one second in
+  __takeoverTimer = setTimeout(() => tickSoldTakeover(TAKEOVER_SECONDS - 1), 1000);
+}
+
+/** One second has passed: show `left`, then either schedule the next second
+ *  or, at 0, fade out and remove. Does nothing if the card was closed early. */
+function tickSoldTakeover(left){
+  if(!__takeoverEl) return;
+  const count = document.getElementById('pvTakeoverCount');
+  if(count) count.textContent = String(left);
+  if(left > 0){
+    __takeoverTimer = setTimeout(() => tickSoldTakeover(left - 1), 1000);
+    return;
+  }
+  __takeoverEl.classList.add('is-leaving');
+  __takeoverTimer = setTimeout(dismissSoldTakeover, TAKEOVER_EXIT_MS);
 }
 
 /* ---------------- Render ---------------- */
@@ -577,6 +679,83 @@ main{max-width:none; margin:22px auto 80px; padding:0;}
 }
 .pv-btn:hover{transform:translateY(-2px); filter:brightness(1.07); box-shadow:inset 0 1px 0 rgba(255,255,255,.55), 0 20px 38px -12px rgba(10,132,255,.95);}
 .pv-btn:active{transform:translateY(0);}
+
+/* ---- sold takeover ----
+   Fixed over everything except the fireworks canvas (z-index 9999), so the
+   bursts land on top of the card. Counts down 5 → 0 (tickSoldTakeover), then
+   fades out; tap or Escape closes it early. */
+.pv-takeover{
+  position:fixed; inset:0; z-index:9000; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; padding:24px;
+  background:
+    radial-gradient(60% 55% at 50% 38%, rgba(228,174,73,.18), transparent 70%),
+    rgba(4,7,12,.92);
+  -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+  animation:pvTakeoverIn .25s ease-out both;
+}
+.pv-takeover-card{width:100%; max-width:600px; text-align:center;}
+.pv-takeover-stamp{
+  font-family:var(--font-display); text-transform:uppercase;
+  font-size:clamp(76px,17vw,160px); font-weight:700; line-height:.85; letter-spacing:6px;
+  margin:0 0 26px; color:var(--pv-orange-l);
+  transform:rotate(-4deg);
+  animation:pvStamp .42s cubic-bezier(.2,1.35,.4,1) both;
+}
+.pv-takeover-photo{
+  display:block; width:168px; height:168px; margin:0 auto 24px;
+  object-fit:cover; object-position:center top;
+  border-radius:20px; background:#0B0E16;
+  box-shadow:0 0 0 2px rgba(228,174,73,.55), 0 26px 60px -20px rgba(0,0,0,.85);
+}
+.pv-takeover-name{
+  font-family:var(--font-display); text-transform:uppercase;
+  font-size:clamp(32px,5.4vw,56px); font-weight:700; letter-spacing:-.5px; line-height:1;
+  color:#fff; margin-bottom:10px; overflow-wrap:anywhere;
+}
+.pv-takeover-to{font-size:clamp(16px,2.2vw,21px); color:var(--pv-ink-2);}
+.pv-takeover-to strong{color:var(--pv-green-l); font-weight:700;}
+.pv-takeover .pv-bid.pv-takeover-price{justify-content:center; margin:16px 0 0;}
+.pv-takeover-hint{margin-top:30px; font-size:11.5px; color:var(--pv-ink-3);}
+/* the countdown: a ring that drains over the same 5s the digit counts, pinned
+   to the top-right of the SCREEN (the overlay is fixed, so this is the screen
+   corner, not the card's) */
+.pv-takeover-timer{
+  position:absolute; top:22px; right:22px; width:64px; height:64px;
+  display:flex; align-items:center; justify-content:center;
+}
+.pv-takeover-ring{position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg);}
+.pv-takeover-ring circle{fill:none; stroke-width:4; stroke-linecap:round;}
+.pv-takeover-ring-bg{stroke:rgba(255,255,255,.14);}
+.pv-takeover-ring-fg{
+  stroke:var(--pv-orange-l);
+  stroke-dasharray:150.8; stroke-dashoffset:0;   /* 2 * pi * r, r = 24 */
+  animation:pvCountdown 5s linear forwards;      /* duration is set inline from TAKEOVER_SECONDS */
+}
+.pv-takeover-count{
+  position:relative; font-family:var(--font-display); font-size:28px; font-weight:700;
+  line-height:1; color:#fff; font-variant-numeric:tabular-nums;
+}
+.pv-takeover.is-leaving{animation:pvTakeoverOut .3s ease-in both; pointer-events:none;}
+@keyframes pvTakeoverIn{from{opacity:0;} to{opacity:1;}}
+@keyframes pvTakeoverOut{from{opacity:1;} to{opacity:0;}}
+@keyframes pvCountdown{to{stroke-dashoffset:150.8;}}
+@keyframes pvStamp{
+  from{opacity:0; transform:scale(1.7) rotate(-9deg);}
+  to{opacity:1; transform:scale(1) rotate(-4deg);}
+}
+@media(max-width:575.98px){
+  .pv-takeover-photo{width:132px; height:132px; margin-bottom:20px;}
+  .pv-takeover-stamp{margin-bottom:20px;}
+  .pv-takeover-timer{top:14px; right:14px; width:52px; height:52px;}
+  .pv-takeover-count{font-size:23px;}
+}
+/* Reduced motion: no slam, no fades, and the ring steps once a second instead
+   of sweeping smoothly. The countdown still works — the digit is what carries
+   it and the ring still shows how much is left — it just doesn't glide. */
+@media(prefers-reduced-motion:reduce){
+  .pv-takeover, .pv-takeover-stamp, .pv-takeover.is-leaving{animation:none;}
+  .pv-takeover-ring-fg{animation-timing-function:steps(var(--pv-take-steps,5),end);}
+}
 
 /* ---- results table ---- */
 .pv-table{--bs-table-bg:transparent; --bs-table-color:#F4F7FD; color:var(--pv-ink); margin:0;}
