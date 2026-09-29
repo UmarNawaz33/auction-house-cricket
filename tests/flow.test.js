@@ -278,6 +278,11 @@ async function run(){
     check('added to that team\'s squad', root['squads/t2/p1'] && root['squads/t2/p1'].price === 40);
     const sale = root['recentSales/p1'];
     check('logged in the results table like a real sale', sale && sale.result === 'sold' && sale.team === 'Tigers' && sale.price === 40);
+    // via:'assigned' is the one fact everything else branches on: the
+    // fireworks/takeover gate skips it (maybeCelebrateNewSale), and
+    // soldLabel() (shared.js) reads it to show "retained" instead of "sold"
+    // wherever this sale is later displayed — see retained-label.test.js
+    check('tagged via:\'assigned\', not \'auction\'', sale && sale.via === 'assigned');
     // the hammer is for the auction floor; a pre-auction retain/assign is
     // paperwork, so it stays silent (same distinction the fireworks make)
     check('no hammer sound — assign is not an auction sale', ctx.__audio.length === 0);

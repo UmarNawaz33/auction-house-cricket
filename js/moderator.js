@@ -393,7 +393,7 @@ Ravindra Jadeja, All-Rounder"></textarea>
           <tr>
             <td><div class="p-cell">${playerImg(p,'sm')}<span class="p-name">${p.name}</span></div></td>
             <td><span class="badge cat">${p.category}</span></td><td>${fmtMoney(p.basePrice)}</td>
-            <td><span class="badge ${p.status}">${p.status}</span></td>
+            <td><span class="badge ${p.status}">${p.status==='sold' ? soldLabel(mstate.recentSales[p.id]) : p.status}</span></td>
             <td>${p.status==='sold' ? (getTeam(p.soldTo)?.name||'—') : '—'}</td>
             <td>${p.status==='sold' ? fmtMoney(p.soldPrice) : '—'}</td>
             <td>
@@ -443,9 +443,10 @@ async function bulkAddPlayers(){
 function confirmDeletePlayer(id){
   const p = getPlayer(id);
   if(p && p.status==='sold'){
+    const retained = soldLabel(mstate.recentSales[id]) === 'retained';
     showModal(`
-      <h3>Delete sold player?</h3>
-      <p style="font-size:13px;color:var(--cream-dim);line-height:1.5;">${p.name} is sold to ${getTeam(p.soldTo)?.name||'a team'} for ${fmtMoney(p.soldPrice)}. Deleting refunds that team. Use "Return to Pool" in Edit instead if you want them re-auctioned.</p>
+      <h3>Delete ${retained?'retained':'sold'} player?</h3>
+      <p style="font-size:13px;color:var(--cream-dim);line-height:1.5;">${p.name} is ${retained?'retained by':'sold to'} ${getTeam(p.soldTo)?.name||'a team'} for ${fmtMoney(p.soldPrice)}. Deleting refunds that team. Use "Return to Pool" in Edit instead if you want them re-auctioned.</p>
       <div class="modal-actions"><button class="ghost sm" onclick="closeModal()">Cancel</button><button class="danger sm" onclick="deletePlayer('${id}'); closeModal();">Confirm</button></div>
     `);
   } else { deletePlayer(id); }
@@ -459,7 +460,7 @@ async function deletePlayer(id){
 }
 function editPlayerPrompt(id){
   const p = getPlayer(id);
-  const statusInfo = p.status==='sold' ? `<p class="hint">Currently <b>sold</b> to <b>${getTeam(p.soldTo)?.name||'—'}</b> for ${fmtMoney(p.soldPrice)}.</p>`
+  const statusInfo = p.status==='sold' ? `<p class="hint">Currently <b>${soldLabel(mstate.recentSales[id])}</b> ${soldLabel(mstate.recentSales[id])==='retained'?'by':'to'} <b>${getTeam(p.soldTo)?.name||'—'}</b> for ${fmtMoney(p.soldPrice)}.</p>`
     : p.status==='unsold' ? `<p class="hint">Currently marked <b>unsold</b>.</p>` : '';
   showModal(`
     <h3>Edit Player</h3>
@@ -932,7 +933,7 @@ function renderSummary(){
       <tbody>${all.slice().sort((a,b)=>(b.soldPrice||0)-(a.soldPrice||0)).map(p=>`
         <tr><td><div class="p-cell">${playerImg(p,'sm')}<span class="p-name">${p.name}</span></div></td>
         <td><span class="badge cat">${p.category}</span></td><td>${fmtMoney(p.basePrice)}</td>
-        <td><span class="badge ${p.status}">${p.status}</span></td><td>${p.soldTo?(getTeam(p.soldTo)?.name||'—'):'—'}</td>
+        <td><span class="badge ${p.status}">${p.status==='sold' ? soldLabel(mstate.recentSales[p.id]) : p.status}</span></td><td>${p.soldTo?(getTeam(p.soldTo)?.name||'—'):'—'}</td>
         <td>${p.soldPrice!=null?fmtMoney(p.soldPrice):'—'}</td></tr>`).join('')}</tbody>
     </table></div>
   </div>`;

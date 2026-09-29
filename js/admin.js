@@ -310,6 +310,11 @@ function confirmDeleteTeam(id){
 let adminPlayerFilter = {q:'', status:''};
 function renderPlayersTab(){
   const all = aPlayers();
+  // adminState.sales is an array (salesArray()'s output), not keyed by id
+  // like mstate.recentSales in moderator.js — build the lookup once per
+  // render rather than a .find() per row.
+  const salesById = {};
+  adminState.sales.forEach(s=>{ salesById[s.id] = s; });
   const shown = all.filter(p=>{
     if(adminPlayerFilter.q && !(p.name||'').toLowerCase().includes(adminPlayerFilter.q.toLowerCase())) return false;
     if(adminPlayerFilter.status && p.status!==adminPlayerFilter.status) return false;
@@ -342,7 +347,7 @@ function renderPlayersTab(){
           <td><div class="p-cell">${playerImg(p,'sm')}<span class="p-name">${p.name}</span></div></td>
           <td><span class="badge cat">${p.category||'—'}</span></td>
           <td>${fmtMoney(p.basePrice)}</td>
-          <td><span class="badge ${p.status}">${p.status}</span></td>
+          <td><span class="badge ${p.status}">${p.status==='sold' ? soldLabel(salesById[p.id]) : p.status}</span></td>
           <td>${p.soldTo ? (aTeam(p.soldTo)?.name||'—') : '—'}</td>
           <td>${p.soldPrice!=null ? fmtMoney(p.soldPrice) : '—'}</td>
           <td><button class="sm danger" onclick="confirmDeleteAdminPlayer('${p.id}')">Delete</button></td>

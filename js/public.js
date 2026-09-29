@@ -419,7 +419,7 @@ function renderResultsPanel(heading, blurb){
                       <div class="pv-player-name">${r.name}</div>
                       <div class="pv-player-sub d-md-none">${r.category||''}</div>
                       <div class="pv-player-sub d-sm-none">
-                        <span class="pv-pill ${r.result==='sold'?'sold':'unsold'}">${r.result==='sold'?'Sold':'Unsold'}</span>
+                        <span class="pv-pill ${r.result==='sold'?'sold':'unsold'}">${r.result==='sold'?(r.via==='assigned'?'Retained':'Sold'):'Unsold'}</span>
                         ${r.team ? `<span class="pv-sub-team">${r.team}</span>` : ''}
                       </div>
                     </div>
@@ -427,7 +427,7 @@ function renderResultsPanel(heading, blurb){
                 </td>
                 <td class="d-none d-md-table-cell">${r.category ? `<span class="pv-tag sm ${hueFor(r.category)}">${r.category}</span>` : '—'}</td>
                 <td class="d-none d-lg-table-cell text-end pv-num pv-soft">${r.basePrice!=null ? fmtMoney(r.basePrice) : '—'}</td>
-                <td class="d-none d-sm-table-cell"><span class="pv-pill ${r.result==='sold'?'sold':'unsold'}">${r.result==='sold'?'Sold':'Unsold'}</span></td>
+                <td class="d-none d-sm-table-cell"><span class="pv-pill ${r.result==='sold'?'sold':'unsold'}">${r.result==='sold'?(r.via==='assigned'?'Retained':'Sold'):'Unsold'}</span></td>
                 <td class="d-none d-sm-table-cell">${r.team || '—'}</td>
                 <td class="text-end ${r.result==='sold' && r.price!=null ? 'pv-price' : 'pv-dash'}">${r.result==='sold' && r.price!=null ? fmtMoney(r.price) : '—'}</td>
                 <td class="d-none d-lg-table-cell text-end pv-num pv-soft">${fmtTime(r.time)}</td>

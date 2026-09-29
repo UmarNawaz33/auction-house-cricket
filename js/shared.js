@@ -340,6 +340,20 @@ function salesArray(raw){
     .sort((a,b)=>(b.time||0)-(a.time||0));
 }
 
+/**
+ * The word for a 'sold' status/result: 'retained' for the moderator's
+ * pre-auction Assign action, 'sold' for a real live-auction sale. `sale` is
+ * the matching recentSales row carrying `via` (a saleRecord(), or an entry
+ * from salesArray()/mstate.recentSales/adminState.sales) — pass null/undefined
+ * if there isn't one (a legacy row from before `via` existed, or a lookup
+ * that found nothing) and it reads as 'sold', the original meaning.
+ * Lowercase, to match the existing sold/unsold/pending badge text — every
+ * caller of this except public.js's own results table re-cases it themselves
+ * if they need Title Case; theme.css's `.badge` is `text-transform:none`, so
+ * whatever a caller shows is exactly what's shown.
+ */
+function soldLabel(sale){ return (sale && sale.via === 'assigned') ? 'retained' : 'sold'; }
+
 function fmtTime(ts){
   if(!ts) return '—';
   return new Date(ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
@@ -394,7 +408,7 @@ function renderSalesTable(sales, opts){
         <td><div class="p-cell">${playerImg(r,'sm')}<span class="p-name">${r.name}</span></div></td>
         <td>${r.category ? `<span class="badge cat">${r.category}</span>` : '—'}</td>
         <td>${r.basePrice != null ? fmtMoney(r.basePrice) : '—'}</td>
-        <td><span class="badge ${r.result==='sold'?'sold':'unsold'}">${r.result==='sold'?'sold':'unsold'}</span></td>
+        <td><span class="badge ${r.result==='sold'?'sold':'unsold'}">${r.result==='sold'?soldLabel(r):'unsold'}</span></td>
         <td class="tname">${r.team || '—'}</td>
         <td class="amt">${r.result==='sold' && r.price!=null ? fmtMoney(r.price) : '—'}</td>
         <td class="when">${fmtTime(r.time)}</td>

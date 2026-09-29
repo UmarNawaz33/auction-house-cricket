@@ -158,7 +158,12 @@ rounds.
 Other top-level nodes (see `database.rules.json` for exact rules):
 `settings`, `teams`, `squads`, `players`, `recentSales`, `accessKeys`,
 `sessions`, `admins`. None of these have the branching complexity of
-`auction` — they're read more literally.
+`auction` — they're read more literally, with one exception: `players/<id>
+/status` is `'sold'` for BOTH a real live-auction sale and the moderator's
+pre-auction Assign/retain — it cannot tell them apart on its own. Whether a
+given sold player was auctioned or retained lives only on the matching
+`recentSales/<id>.via`, read through `soldLabel()` (§4) — never infer it
+from `players` alone.
 
 ## 4. `js/shared.js` — who calls what
 
@@ -173,7 +178,9 @@ be sanity-checked against every caller before it ships:
 | `hueFor`, `money`, `splitMoney` | public.js (category/team color hashing, headline bid typography) |
 | `playerImg`, `playerImageSrc` | moderator.js, team.js, admin.js (public.js uses `playerImageSrc` directly inside `lotMarkup`/its own table) |
 | `renderTabNav`, `toggleTabMenu` | moderator.js, admin.js (the collapsible hamburger nav) |
-| `renderSalesTable`, `saleRecord`, `salesArray` | moderator.js, admin.js, public.js |
+| `renderSalesTable` | moderator.js, admin.js. **Not public.js** — despite living right next to `saleRecord`/`salesArray` (which public.js does use), public.js has its own independent results-table markup (two `.pv-pill` spots) rather than calling this. A wording/column change here does not reach `index.html`; check both places. |
+| `saleRecord`, `salesArray` | moderator.js, admin.js, public.js |
+| `soldLabel` | `renderSalesTable` (shared.js itself); moderator.js's Players tab, Summary tab, `editPlayerPrompt`, `confirmDeletePlayer`; admin.js's Players tab. Reads `sale.via` (`'assigned'` → `'retained'`, anything else → `'sold'`) — **not** `player.status`, which is `'sold'` for both a real auction sale and a moderator Assign and can't tell them apart on its own. Lowercase; a caller re-cases it if it needs Title Case. **public.js does NOT call this** — its own two results-table spots (see `renderSalesTable` row above) inline the identical `via==='assigned'` check themselves, capitalized, because it never calls the shared table renderer. Touch both if the wording changes again. |
 | `isPaused`, `isAwaitingNext`, `isCompleted`, `biddingIsOpen`, `sessionInProgress` | all four auction-state-aware pages (not admin's login gate) |
 | `bidPriceFor`, `teamCanAffordBid`, `spentOf`, `squadCountOf`, `remainingOf`, `reserveNeeded` | team.js (bid buttons), moderator.js (floor eligibility) |
 | `toast`, `showModal`, `closeModal`, `escapeAttr` | all four |
@@ -268,7 +275,7 @@ the DOM, load the real `js/*.js` files unmodified into a VM context, and
 assert on what gets rendered or written.
 
 ```
-node tests/run.js                    # everything (354 checks, well under 1s)
+node tests/run.js                    # everything (379 checks, well under 1s)
 node tests/run.js render markup      # only the named suites
 node tests/run.js --list             # see suite names
 ```
@@ -277,10 +284,11 @@ node tests/run.js --list             # see suite names
 |---|---|---|---|
 | `render` | render.test.js | every tab/state on all 4 pages renders without throwing or leaking `undefined`/`NaN`/`[object Object]` | any render function's template string, on any page — the cheap first check |
 | `markup` | markup.test.js | the same states produce tag-balanced HTML (no unclosed `<div>`) | same as above, when the edit reshuffles nested tags rather than just text |
-| `flow` | flow.test.js | `js/moderator.js`'s action functions write the *correct* Firebase payload (sold/unsold/skip/next/pause/resume/complete/reopen/disconnect); that `recentSales` stays one row per player through release/return/delete and a resale overwrites rather than duplicates; the retain/assign feature (`assignPlayerPrompt`/`confirmAssignPlayer`); and that the SOLD hammer sound fires on a real sale but **not** on unsold or assign (`ctx.__audio`, via the `Audio` stub in `tests/lib/dom-stub.js`) | `markSold`, `markUnsold`, `skipPlayer`, `nextPlayer`, `pauseSession`, `pauseBidding`, `resumeSession`, `resetBid`, `completeBidding`, `reopenAuction`, `attachListeners`, `doRelease`, `returnToPool`, `deletePlayer`, `assignPlayerPrompt`/`confirmAssignPlayer` — or anything else that touches `recentSales` |
+| `flow` | flow.test.js | `js/moderator.js`'s action functions write the *correct* Firebase payload (sold/unsold/skip/next/pause/resume/complete/reopen/disconnect); that `recentSales` stays one row per player through release/return/delete and a resale overwrites rather than duplicates; the retain/assign feature (`assignPlayerPrompt`/`confirmAssignPlayer`), **including that it writes `via:'assigned'`** (the one fact `soldLabel()`/the fireworks gate/the takeover gate all branch on); and that the SOLD hammer sound fires on a real sale but **not** on unsold or assign (`ctx.__audio`, via the `Audio` stub in `tests/lib/dom-stub.js`) | `markSold`, `markUnsold`, `skipPlayer`, `nextPlayer`, `pauseSession`, `pauseBidding`, `resumeSession`, `resetBid`, `completeBidding`, `reopenAuction`, `attachListeners`, `doRelease`, `returnToPool`, `deletePlayer`, `assignPlayerPrompt`/`confirmAssignPlayer` — or anything else that touches `recentSales` |
 | `bidsteps` | bidsteps.test.js | the team owner's +1/+2 buttons: pricing (`bidPriceFor`), per-button affordability, and what `placeMyBid` writes | `shared.js`'s `bidPriceFor`/`teamCanAffordBid`, or `team.js`'s bid buttons/`placeMyBid` |
 | `endgame` | endgame.test.js | the real end-of-auction journey: last player sold → moderator's "All Players Auctioned" panel → Complete Bidding → public home screen → results-on-request | moderator's all-done panel or `completeBidding()`; public's `renderHomeScreen()`/`togglePastResults()` |
 | `admin-isolation` | admin-isolation.test.js | admin sign-out writes nothing and never pauses the auction; admin UI still works while paused+completed; moderator-only functions don't leak into admin.js; **a credential lost underneath an open admin tab (null or anonymous) clears the session, says so, and falls back to the login screen — and a rejected key write reports the remedy instead of silently doing nothing** | `admin.js` sign-out/session handling or its `onAuthStateChanged`, the `accessKeys` write paths, or before assuming a moderator helper is moderator-only |
+| `retained-label` | retained-label.test.js | `soldLabel()` itself (assigned/auction/legacy-no-`via`/no-sale-found, always lowercase); `renderSalesTable()`'s badge text AND that its CSS class stays `sold` (green) for a retained row — only the word changes; moderator.js's Players tab, Summary tab, `editPlayerPrompt`'s status hint and `confirmDeletePlayer`'s title+body, each checked for BOTH a retained and a real-sale player so neither wording regresses into the other; admin.js's Players tab; and public.js's own independently-implemented results table (it doesn't call `renderSalesTable` — see §4) | `soldLabel`/`renderSalesTable` (shared.js), moderator.js's Players/Summary tabs or its edit/delete-player modals, admin.js's Players tab, or public.js's own results-table markup |
 | `auth` | auth.test.js | **admin.html gets its own named Firebase app while the other three stay on the default — asserted from both ends (shared.js honours `data-pv-app`, and the HTML actually sets it);** `ensureAnonymousAuth()` never reuses a non-anonymous session and scopes new ones to the tab; `signOutAll()` and every page's `doSignOut()` genuinely await Firebase's sign-out before clearing local session state; a disabled-Anonymous-provider rejection gets translated into an actionable message that reaches the login screen | `shared.js`'s app init / `ensureAnonymousAuth` / `signOutAll`, any page's `doSignOut()`, or the `<html>` tag of any page |
 | `fireworks` | fireworks.test.js | `maybeCelebrateNewSale()` (public.js): never fires on first load or a re-render of the same sale, fires for a real auction sale (tagged or untagged `via`), never fires for 'unsold' or for `via:'assigned'`; **fires again when the same player is released and re-sold (same id, new time), not again on a re-render of that re-sale, and stays silent if that re-sale turns out unsold or assigned** | public.js's sale gate (`maybeCelebrateNewSale`/`saleKey`), or shared.js's `saleRecord()`/`via` tagging |
 | `takeover` | takeover.test.js | `soldTakeoverMarkup` content (incl. the circular 5→0 timer, its ring duration and reduced-motion step count both derived from `TAKEOVER_SECONDS`, `aria-hidden`), HTML-escaping of player/team names, and graceful degradation on missing fields; the real tick chain — digit reads 4,3,2,1,0 at one second apiece (5s total), then a 300ms fade and removal; Escape / tap closes early and a stale pending tick then does nothing; a second sale replaces rather than stacks; and that it is wired to the fireworks gate exactly (not on first load, repeat render, unsold or assign; **does** show again for a released-and-re-sold player, with the new team and price); and that it never references `TEMP_FIREWORKS_ENABLED` | public.js's takeover (`soldTakeoverMarkup`/`showSoldTakeover`/`tickSoldTakeover`/`dismissSoldTakeover`) or `maybeCelebrateNewSale` |
