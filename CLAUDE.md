@@ -205,17 +205,77 @@ design**:
   page only) owns sections that only exist on the public page: the home
   screen (`.pv-hero*`), the results table (`.pv-table`, `.pv-pill`,
   `.pv-thumb`, ...), the teams grid (`.pv-team*`), status banners
-  (`.pv-banner*`), the "next player coming up" panel (`.pv-next*`), and the
-  full-screen sold takeover (`.pv-takeover*`, z-index 9000 — under the
-  fireworks canvas at 9999 so bursts land on top of the card). It stays up
-  `TAKEOVER_SECONDS` (5) with a circular countdown pinned to the top-right of
-  the screen. **The digit and the close are driven by one chain of 1-second
-  `setTimeout`s (`tickSoldTakeover`); the ring is a CSS animation of the same
-  length and is purely visual.** Change the duration in `TAKEOVER_SECONDS`
-  only — the ring's `animation-duration` and the reduced-motion step count are
-  passed inline from it. Like the fireworks it avoids `setInterval`/wall-clock
-  stop conditions (§7a), and its constants sit above the `recentSales` listener
-  for the same TDZ reason as the `__fw` state.
+  (`.pv-banner*`), the "next player coming up" panel (`.pv-next*`), and four
+  **audience features** (2026-09-30), all public-only because they're for
+  the people watching, not the people running the auction. (A fifth, a live
+  purse race bar, was built the same day and then removed by request —
+  `renderPurseRace()`/`.pv-race*` no longer exist; don't reintroduce them
+  from an old memory or an old diff without being asked.) Also that day:
+  the live page's section order changed to **Teams above Live Results**
+  (`renderPublic()`'s live branch) — the completed/home screen's
+  "Final Squads" vs "Previous Bidding Results" order was deliberately left
+  as-is, only the live labels ("Teams"/"Live Results") were asked to swap.
+    - **the full-screen sold takeover** (`.pv-takeover*`, z-index 9000 —
+      under the fireworks canvas at 9999 so bursts land on top of the card).
+      Stays up `TAKEOVER_SECONDS` (5) with a circular countdown pinned to
+      the top-right of the screen. **The digit and the close are driven by
+      one chain of 1-second `setTimeout`s (`tickSoldTakeover`); the ring is
+      a CSS animation of the same length and is purely visual.** Change the
+      duration in `TAKEOVER_SECONDS` only — the ring's `animation-duration`
+      and the reduced-motion step count are passed inline from it. Avoids
+      `setInterval`/wall-clock stop conditions like the fireworks (§7a).
+    - **"New Record" banner** — the SAME takeover, with `soldTakeoverMarkup`/
+      `showSoldTakeover`'s `opts.isRecord` swapping the stamp text and
+      adding `.is-record` for a distinct gold treatment (`.pv-takeover-card
+      .is-record .pv-takeover-stamp` uses a SMALLER clamp than the plain
+      "Sold" stamp — "New Record!" is a much longer word). `__recordHighest`
+      (seeded from history, not announced, on the first `recentSales`
+      snapshot — same reasoning as `__fwLastSaleKey` right above it) tracks
+      the highest REAL auction sale seen; `isNewRecord`/`updateRecord` are
+      the two halves of reading/advancing it. Only counts auction sales,
+      never a retained/assigned player (`soldLabel()`, shared.js) — reads
+      `via`, not `player.status`, same reminder as everywhere else this
+      distinction matters.
+    - **bidding-war visual** (`.pv-war-tag`) — `handleAuctionTransition()`
+      (the `auction` listener's callback) detects a genuine bid (currentPrice
+      OR leaderTeamId actually changing, not just any write to the node) and
+      feeds `registerBid()`'s rolling window; `BIDDING_WAR_COUNT` bids within
+      `BIDDING_WAR_WINDOW_MS` lights the tag for `BIDDING_WAR_DISPLAY_MS` via
+      `isBiddingWarActive()`. **Known imprecision:** the moderator's Reset
+      Bid also changes `currentPrice`/`leaderTeamId` on the same lot, so it
+      can contribute one spare pulse — accepted, see the function's own
+      comment.
+    - **player reveal animation** (`.pv-lot.is-revealing`) — a one-shot
+      blur/fade-in when a GENUINELY NEW player appears (not a bid on the
+      same one), via `__justRevealed`, set by `handleAuctionTransition()`
+      and consumed (reset to `false`) by the `auction` listener immediately
+      after the render it affects — so a later re-render from an unrelated
+      listener (e.g. `pv.teams`) never replays it. **Lives in this sheet,
+      not theme.css, even though `.pv-lot` itself is theme.css's** — this
+      modifier class is only ever added by public.js, so defining it in
+      theme.css would be dead weight on moderator.html/team.html (which
+      never set it). Loads after theme.css, so it wins the cascade for this
+      one modifier without `!important`.
+    - **spectator reactions** (`#pvReactionBar`/`#pvReactionLayer`/
+      `.pv-reaction-*`) — explicitly, by request, touches NOTHING in
+      Firebase: no write path, no `database.rules.json` change, no auth.
+      Every tap is local to that one viewer's tab; reactions are NOT shared
+      between different viewers' screens. `#pvReactionBar` is injected ONCE
+      at load (`injectReactionBar()`, called near the top of the file,
+      alongside `injectLook()`) and lives outside `#tabContent`, so it
+      survives every `renderPublic()` re-render untouched. Pinned to the
+      **bottom-right corner** (`right:18px; bottom:88px`) — **not** the
+      same `right:16px; bottom:16px` spot as `#toastRoot` (theme.css),
+      which this page genuinely uses (the sound enable/error toasts): the
+      extra `bottom` offset is deliberate clearance so the two never
+      overlap, not an arbitrary number — re-derive it (roughly one toast's
+      height + margin above 16px) if either one's sizing changes. The
+      mobile breakpoint needs its OWN clearance number too, since
+      `#toastRoot` becomes a full-width band there (not just a corner box).
+      `handleAuctionTransition()` calls `clearReactions()` on every
+      lot-scoped change (new player, lot ending, or a real bid) — "reset for
+      every new bid" is a deliberate product choice, not a technical one;
+      nothing here is stored anywhere.
   Editing one of these classes only ever affects `index.html`.
 - Deliberately shared across both (utility classes, not a bug):
   `.pv-live-dot`, `.pv-no-bs`, `.pv-unit`.
@@ -266,6 +326,7 @@ as the ones above — easy to reintroduce without realizing it.
 | the same constraint, for the sold sound on the PUBLIC big screen | Nobody ever clicks `index.html` — it's the unattended projector page — so it has no gesture at all to spend, not even a mistimed one. Confirmed in a real (non-headless-stub) Chrome: calling the unlock from a plain `<script>` tag with no real click gets its `play()` genuinely rejected by the browser, not by any code here. | `index.html`'s header has a static `#soundToggle` button, `onclick="enablePublicSound()"` (public.js). That click is real activation, so `enablePublicSound()`'s `play()` succeeds; it then immediately `.pause()`s + rewinds so nothing is heard, sets `publicSoundEnabled`, and disables the button. `playPublicSoldSound()` (called from `maybeCelebrateNewSale()`, same gate as the takeover/fireworks) is a no-op until that flag is true. **Safari's autoplay policy is element-specific** — the unlock only carries forward to *that exact* `<audio>` element, not to a fresh `new Audio(...)` — so `publicSoldSound` is one module-level instance, reused (rewound via `currentTime = 0`) for both the unlock and every later play, same as moderator.js's `soldSound`. Declared above the `recentSales` listener for the same TDZ reason as the `__fw`/takeover state (§7a). |
 | fireworks/takeover stayed silent when the SAME player was released and re-sold | Sales are keyed by player id (`recentSales/<playerId>`, see the first row), so a re-sale OVERWRITES the player's one row rather than adding another. The gate in `maybeCelebrateNewSale()` decided "is this a new sale" by comparing the newest row's **id** alone, and an overwritten row has the same id, so the re-sale looked unchanged and nothing fired. | The gate compares `saleKey()` = `id + ':' + time`. `saleRecord()` stamps a fresh `time: Date.now()` on every write, so id + time identifies one specific sale *event*. `fireworks.test.js` builds each fixture sale with a FIXED time per id (a real re-render returns the stored row byte-for-byte); it previously used a fresh `Date.now()` per call, which made "same sale" differ by a millisecond ~1 run in 9 once the gate looked at time. **Any new code that decides whether a sale is "new" must key on id + time, not id.** |
 | `nav.tabs button` never reset the generic `button{}` rule's `box-shadow`/`backdrop-filter`, or `button:hover`'s `transform` | Same shape of bug as the ones above, in the same file: `nav.tabs button{}` was written as a flat, transparent pill (`background:transparent; border:none`) but never touched those three properties, so they fell through from the less-specific generic `button` rule anyway — CSS only overrides a property a more-specific rule actually *declares*. Every nav tab carried an always-on inset ring plus its own 12px blur stacked on the header's own much stronger one, and lifted 1px on hover — looked exactly like a stray highlight/glow bleeding onto the page content just below the header. | `nav.tabs button` now explicitly sets `box-shadow:none` and `backdrop-filter:none`; `nav.tabs button:hover` sets `transform:none`. `.pv-burger` (the hamburger) had the same `backdrop-filter` leak, fixed the same way. **Whenever a rule is written to override a generic element style down to "flat/plain," explicitly zero out every property the generic rule sets — a property that's simply never mentioned still applies.** |
+| `const REACTION_EMOJI` declared AFTER the top-level call that reads it — **this shipped, then was caught by real-browser testing, not `node tests/run.js`** | The SAME temporal-dead-zone trap §7a already documents for the fireworks `let`s, hit for real this time. `injectReactionBar()` is called at module load (near the top of public.js, alongside `injectLook()`) and reads `REACTION_EMOJI`; a `const` isn't given a value until ITS OWN declaration line runs, unlike a function declaration (fully hoisted). With the declaration left down in the "Spectator reactions" section next to the functions that use it, loading the real page threw `Cannot access 'REACTION_EMOJI' before initialization` immediately — an uncaught top-level throw that aborted the **entire script**, so nothing after that line ever ran: no Firebase listeners, no rendering, a blank public page. **`node tests/run.js` did not catch this — all 445 checks passed anyway.** Root cause: the default dom-stub's `getElementById()` always returns a truthy stub object for any id (see its own doc comment), so `injectReactionBar()`'s own `if(document.getElementById('pvReactionBar')) return;` guard silently short-circuited on the very first call in every test, before ever reaching `REACTION_EMOJI` — the throw only existed on a real page load in a real browser, where `getElementById` correctly returns `null` for an element that doesn't exist yet. | `REACTION_EMOJI`'s declaration moved above the `injectReactionBar()` call, with a comment on both ends warning not to move it back without re-testing in an actual browser. Guarded by a regression test in `audience-features.test.js` that checks SOURCE ORDER directly (declaration index < call index) rather than trying to out-clever the dom-stub gap that hid it — a test relying on the stub's `getElementById` behaving realistically would need the stub fixed first, which carries its own regression risk across every other test that currently depends on its current (unrealistic) always-truthy behavior; not attempted here, left as a known harness limitation. **The general lesson, not just for this one variable: `node tests/run.js` passing is not proof that a page loads. Anything invoked at a file's top level (not inside a function called later) needs an actual browser check — this project's own dom-stub can and does mask a real top-level throw.** |
 
 ## 7. Test suite — which one to run
 
@@ -275,7 +336,7 @@ the DOM, load the real `js/*.js` files unmodified into a VM context, and
 assert on what gets rendered or written.
 
 ```
-node tests/run.js                    # everything (379 checks, well under 1s)
+node tests/run.js                    # everything (438 checks, well under 1s)
 node tests/run.js render markup      # only the named suites
 node tests/run.js --list             # see suite names
 ```
@@ -293,6 +354,7 @@ node tests/run.js --list             # see suite names
 | `fireworks` | fireworks.test.js | `maybeCelebrateNewSale()` (public.js): never fires on first load or a re-render of the same sale, fires for a real auction sale (tagged or untagged `via`), never fires for 'unsold' or for `via:'assigned'`; **fires again when the same player is released and re-sold (same id, new time), not again on a re-render of that re-sale, and stays silent if that re-sale turns out unsold or assigned** | public.js's sale gate (`maybeCelebrateNewSale`/`saleKey`), or shared.js's `saleRecord()`/`via` tagging |
 | `takeover` | takeover.test.js | `soldTakeoverMarkup` content (incl. the circular 5→0 timer, its ring duration and reduced-motion step count both derived from `TAKEOVER_SECONDS`, `aria-hidden`), HTML-escaping of player/team names, and graceful degradation on missing fields; the real tick chain — digit reads 4,3,2,1,0 at one second apiece (5s total), then a 300ms fade and removal; Escape / tap closes early and a stale pending tick then does nothing; a second sale replaces rather than stacks; and that it is wired to the fireworks gate exactly (not on first load, repeat render, unsold or assign; **does** show again for a released-and-re-sold player, with the new team and price); and that it never references `TEMP_FIREWORKS_ENABLED` | public.js's takeover (`soldTakeoverMarkup`/`showSoldTakeover`/`tickSoldTakeover`/`dismissSoldTakeover`) or `maybeCelebrateNewSale` |
 | `public-sound` | public-sound.test.js | `enablePublicSound()`: success unlocks + updates `#soundToggle` + confirms with a toast; a genuinely rejected `play()` leaves `publicSoundEnabled` false and the button retry-able, with an error toast; missing `Audio` doesn't throw. `playPublicSoldSound()`: silent before enabling (even for a real new sale), wired to the same gate as the takeover/fireworks once enabled (first load, repeat, unsold, assign, re-sale — same matrix as `takeover`), and reuses one `<audio>` element rather than rebuilding it. Plus: `index.html` has `#soundToggle` wired to `enablePublicSound()`, and the other three pages don't | public.js's `enablePublicSound`/`playPublicSoldSound`/`updateSoundToggle`, `index.html`'s `#soundToggle`, or `maybeCelebrateNewSale` |
+| `audience-features` | audience-features.test.js | The audience features (§5), all public.js-only: **record banner** — `seedRecordFromHistory`/`isNewRecord`/`updateRecord` (never a tie, never the first-ever sale, `via:'assigned'` never counts) and `soldTakeoverMarkup(sale,{isRecord})`'s content, end-to-end through the real `maybeCelebrateNewSale` gate; **bidding war** — `handleAuctionTransition()` registers a pulse only on a GENUINE bid (not an unrelated `auction` write), stale pulses outside `BIDDING_WAR_WINDOW_MS` are pruned, `registerBid()`/`isBiddingWarActive()`'s timing, and the tag's presence in `renderLiveLot()`; **reveal animation** — `__justRevealed` set for a new player and NOT for a bid on the same one, consumed (reset) after exactly one render via the real registered `db.ref('auction').on('value')` listener (`ref()._trigger()`, dom-stub.js); **reactions** — zero Firebase writes ever, the bar injected once and not duplicated, `sendReaction()`'s particle creation/spread/self-removal, `clearReactions()`, and **a regression test for a real bug**: `REACTION_EMOJI` must be declared before the top-level `injectReactionBar()` call that reads it (§6a); **page layout** — Teams renders before Live Results on the live page (moved by request; the completed/home screen's order was deliberately left alone) | any of the audience features above, `renderPublic()`'s live-branch section order, or `handleAuctionTransition`/`registerBid`/`isBiddingWarActive` specifically since several features share it |
 
 **What these tests do NOT catch** — they run in a headless `vm` context with
 a fake DOM, not a real browser: no actual CSS is applied, so a visual/layout

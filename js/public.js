@@ -36,6 +36,26 @@
   document.head.appendChild(style);
 })();
 
+// REACTION_EMOJI must be declared before the injectReactionBar() call just
+// below, not down in the "Spectator reactions" section next to the
+// functions that use it (a `const` is NOT given a value until its own
+// declaration line runs, unlike a function declaration — reading one before
+// that line throws "Cannot access before initialization"). This is the
+// SAME TDZ trap __fwSeenFirstSnapshot/__takeoverEl above exist to avoid, and
+// it bit this feature for real the first time round: the default test-stub
+// getElementById() always returns a truthy stub (see tests/lib/dom-stub.js's
+// own doc comment), so injectReactionBar()'s "already exists, skip" guard
+// silently short-circuited before ever reaching REACTION_EMOJI in every
+// Node test — the throw only showed up on a real page load in a real
+// browser. Don't move this line back down without re-testing in an actual
+// browser, not just `node tests/run.js`.
+const REACTION_EMOJI = ['🔥','👏','😮','❤️','😂'];
+
+// injectReactionBar() is defined further down (Spectator reactions, hoisted
+// like pvCss() above); the reaction bar is static markup that never needs to
+// re-render, so it's injected once here rather than living in renderPublic().
+injectReactionBar();
+
 /* ---------------- State ---------------- */
 
 let pv = { settings:{currencyUnit:'Cr'}, teams:{}, players:{}, auction:{}, sales:[] };
@@ -76,6 +96,20 @@ const TAKEOVER_EXIT_MS = 300;      // the fade-out once the timer reaches 0
 let publicSoldSound = null;    // the one <audio> element, reused every play — see below for why reuse matters
 let publicSoundEnabled = false; // true only after a real click has succeeded
 
+/* State for the four audience features driven off the `auction` listener
+   below (record banner excepted — that one lives off the recentSales
+   listener, next to the sold takeover it shares a gate with). Declared here
+   for the same TDZ reason as every block above: the listener can resolve
+   synchronously from Firebase's local cache on its very first call. */
+let __bidPulseTimes = [];  // recent Date.now()s of genuine bid changes, oldest first
+let __biddingWarUntil = 0; // Date.now() the "heating up" visual should clear by
+let __lastBidPrice = null; // for detecting a genuine bid vs. an unrelated auction write
+let __lastBidLeader = null;
+let __justRevealed = false; // true for exactly one render: the lot just changed
+const BIDDING_WAR_COUNT = 3;        // this many bids...
+const BIDDING_WAR_WINDOW_MS = 9000; //  ...within this many ms...
+const BIDDING_WAR_DISPLAY_MS = 5000; // ...shows the "heating up" visual for this long
+
 watchConnection('connBadge');
 
 db.ref('settings').on('value', s=>{ pv.settings = s.val() || pv.settings; window.__settingsCache = pv.settings; renderPublic(); });
@@ -86,12 +120,92 @@ db.ref('squads').on('value', s=>{
   renderPublic();
 });
 db.ref('players').on('value', s=>{ pv.players = s.val() || {}; renderPublic(); });
-db.ref('auction').on('value', s=>{ pv.auction = s.val() || {}; renderPublic(); });
+db.ref('auction').on('value', s=>{
+  const next = s.val() || {};
+  handleAuctionTransition(pv.auction, next); // bidding-war pulse, reveal flag, reaction reset
+  pv.auction = next;
+  renderPublic();
+  __justRevealed = false; // consumed by the render just above — see its own comment
+});
 db.ref('recentSales').on('value', s=>{
   pv.sales = salesArray(s.val());
   maybeCelebrateNewSale(pv.sales); // TEMP FIREWORKS hook (piece 2 of 3 — see below)
   renderPublic();
 });
+
+/**
+ * Three audience features share one piece of bookkeeping: "did the lot just
+ * change, and did a bid just land?" `prev`/`next` are the auction node before
+ * and after this snapshot.
+ *
+ *   - a NEW player on the block (including the first snapshot this viewer
+ *     ever sees, if a lot is already live) sets __justRevealed for the
+ *     player-reveal animation, and resets everything below as a fresh start
+ *   - the lot ending (currentPlayerId -> null, any reason) resets the same
+ *     things — no player on the block, nothing to be "heating up" about
+ *   - the SAME player, but currentPrice or leaderTeamId changed, is a real
+ *     bid: it feeds the bidding-war pulse counter
+ *
+ * Every one of those three cases also clears any reaction emoji still
+ * floating on screen (clearReactions()) — "reset for every new bid" is a
+ * deliberate product choice, not a technical necessity: nothing here is
+ * stored anywhere, so there's no data-integrity reason to clear it, it just
+ * keeps the screen feeling like it's moving forward with the auction rather
+ * than accumulating clutter.
+ *
+ * Known imprecision: the moderator's "Reset Bid" (resetBid() in
+ * moderator.js) also changes currentPrice/leaderTeamId on the SAME lot, so
+ * it is indistinguishable from a real bid here and can contribute one spare
+ * pulse to the bidding-war counter. Accepted — Reset Bid is rare, and the
+ * consequence is one extra pulse, not a wrongly-shown banner.
+ */
+function handleAuctionTransition(prev, next){
+  const prevPlayer = (prev && prev.currentPlayerId) || null;
+  const nextPlayer = (next && next.currentPlayerId) || null;
+
+  if(nextPlayer && nextPlayer !== prevPlayer){
+    __justRevealed = true;
+    __bidPulseTimes = [];
+    __biddingWarUntil = 0;
+    __lastBidPrice = next.currentPrice != null ? next.currentPrice : null;
+    __lastBidLeader = next.leaderTeamId || null;
+    clearReactions();
+    return;
+  }
+  if(!nextPlayer){
+    __bidPulseTimes = [];
+    __biddingWarUntil = 0;
+    __lastBidPrice = null;
+    __lastBidLeader = null;
+    clearReactions();
+    return;
+  }
+  const price = next.currentPrice != null ? next.currentPrice : null;
+  const leader = next.leaderTeamId || null;
+  if(price !== __lastBidPrice || leader !== __lastBidLeader){
+    registerBid();
+    clearReactions();
+  }
+  __lastBidPrice = price;
+  __lastBidLeader = leader;
+}
+
+/** A bid landed: record it, and if that makes BIDDING_WAR_COUNT within
+ *  BIDDING_WAR_WINDOW_MS, light up the "heating up" visual for
+ *  BIDDING_WAR_DISPLAY_MS. Nothing re-renders purely because a timeout
+ *  elapses, so one extra render is scheduled right as it should clear —
+ *  otherwise the glow would stay lit until the next unrelated Firebase
+ *  update happened to fire. */
+function registerBid(){
+  const now = Date.now();
+  __bidPulseTimes.push(now);
+  __bidPulseTimes = __bidPulseTimes.filter(t => now - t <= BIDDING_WAR_WINDOW_MS);
+  if(__bidPulseTimes.length >= BIDDING_WAR_COUNT){
+    __biddingWarUntil = now + BIDDING_WAR_DISPLAY_MS;
+    setTimeout(()=>{ if(Date.now() >= __biddingWarUntil) renderPublic(); }, BIDDING_WAR_DISPLAY_MS + 50);
+  }
+}
+function isBiddingWarActive(){ return Date.now() < __biddingWarUntil; }
 
 /**
  * TEMP FIREWORKS hook (piece 2 of 3 — see the "TEMPORARY FEATURE" block near
@@ -110,19 +224,48 @@ db.ref('recentSales').on('value', s=>{
  */
 function saleKey(sale){ return sale ? sale.id + ':' + (sale.time || 0) : null; }
 
+/* ---- "New Record" banner state ----
+   The highest REAL auction-sale price seen so far (never a retained/assigned
+   player — soldLabel() in shared.js is the reminder that `via`, not `result`,
+   is what tells the two apart). null until a sale has actually been seen, so
+   the very first sale of the auction is never announced as "beating" a record
+   that doesn't exist yet. Seeded from history (not announced) on the first
+   recentSales snapshot, same as __fwLastSaleKey just above, so a viewer who
+   opens the page mid-auction doesn't get a false "new record" the moment the
+   NEXT ordinary sale happens to be merely high, not actually the highest. */
+let __recordHighest = null;
+function seedRecordFromHistory(sales){
+  __recordHighest = null;
+  sales.forEach(s=>{
+    if(s.result==='sold' && s.via!=='assigned' && s.price!=null){
+      if(__recordHighest===null || s.price > __recordHighest) __recordHighest = s.price;
+    }
+  });
+}
+function isNewRecord(sale){
+  return __recordHighest !== null && sale.price != null && sale.price > __recordHighest;
+}
+function updateRecord(sale){
+  if(sale.price == null) return;
+  if(__recordHighest === null || sale.price > __recordHighest) __recordHighest = sale.price;
+}
+
 function maybeCelebrateNewSale(sales){
   const newestSale = sales[0];
   if(!__fwSeenFirstSnapshot){
     __fwSeenFirstSnapshot = true;
     __fwLastSaleKey = saleKey(newestSale);
+    seedRecordFromHistory(sales);
     return;
   }
   if(newestSale && saleKey(newestSale) !== __fwLastSaleKey){
     __fwLastSaleKey = saleKey(newestSale);
     if(newestSale.result === 'sold' && newestSale.via !== 'assigned'){
+      const isRecord = isNewRecord(newestSale);
       playPublicSoldSound();
-      showSoldTakeover(newestSale);
+      showSoldTakeover(newestSale, {isRecord});
       celebrateSaleFirework();
+      updateRecord(newestSale);
     }
   }
 }
@@ -196,9 +339,15 @@ function playPublicSoldSound(){
    the fireworks avoid one: see CLAUDE.md §7a.)
 
    The markup builder is separate from the DOM code so it can be tested as a
-   plain string. Every value that came from the database is escaped. */
-function soldTakeoverMarkup(sale){
+   plain string. Every value that came from the database is escaped.
+
+   `opts.isRecord` (from isNewRecord() above, next to maybeCelebrateNewSale)
+   swaps the "Sold" stamp for "New Record!" and adds a `.is-record` modifier
+   class for a distinct colour treatment — same card, same timer, same
+   dismiss/Escape/replace behaviour, just a different moment. */
+function soldTakeoverMarkup(sale, opts){
   const s = sale || {};
+  const o = opts || {};
   return `
   <div class="pv-takeover-timer" aria-hidden="true">
     <svg class="pv-takeover-ring" viewBox="0 0 56 56" focusable="false">
@@ -207,8 +356,8 @@ function soldTakeoverMarkup(sale){
     </svg>
     <span class="pv-takeover-count" id="pvTakeoverCount">${TAKEOVER_SECONDS}</span>
   </div>
-  <div class="pv-takeover-card">
-    <div class="pv-takeover-stamp">Sold</div>
+  <div class="pv-takeover-card${o.isRecord ? ' is-record' : ''}">
+    <div class="pv-takeover-stamp">${o.isRecord ? 'New Record!' : 'Sold'}</div>
     <img class="pv-takeover-photo" src="${escapeAttr(playerImageSrc({image:s.image}))}" alt=""
          onerror="this.onerror=null;this.src='${DEFAULT_PLAYER_IMAGE}';">
     <div class="pv-takeover-name">${escapeHtml(s.name || 'Player')}</div>
@@ -227,15 +376,15 @@ function dismissSoldTakeover(){
 }
 function onTakeoverKey(e){ if(e && e.key === 'Escape') dismissSoldTakeover(); }
 
-function showSoldTakeover(sale){
+function showSoldTakeover(sale, opts){
   if(typeof document === 'undefined') return;
   dismissSoldTakeover(); // a second sale right behind the first replaces it
   const el = document.createElement('div');
-  el.className = 'pv-takeover';
+  el.className = 'pv-takeover' + ((opts && opts.isRecord) ? ' is-record' : '');
   el.setAttribute('role', 'status');
   el.setAttribute('aria-live', 'polite');
   el.setAttribute('onclick', 'dismissSoldTakeover()');
-  el.innerHTML = soldTakeoverMarkup(sale);
+  el.innerHTML = soldTakeoverMarkup(sale, opts);
   document.body.appendChild(el);
   __takeoverEl = el;
   document.addEventListener('keydown', onTakeoverKey);
@@ -255,6 +404,84 @@ function tickSoldTakeover(left){
   }
   __takeoverEl.classList.add('is-leaving');
   __takeoverTimer = setTimeout(dismissSoldTakeover, TAKEOVER_EXIT_MS);
+}
+
+/* ---------------- Spectator reactions ----------------
+   By explicit request: NOTHING here touches Firebase. No write path, no
+   database.rules.json change, no auth — every tap is purely local to that
+   one viewer's own browser tab, gone the moment they close it. That also
+   means reactions are NOT shared between different viewers' screens; each
+   person watching gets their own private "send a reaction" toy, not a
+   stadium-wide shared overlay. If that ever needs to change, it needs a
+   deliberate access-control decision first (see the "New Record"/bidding-war
+   features for how little plumbing the FIREBASE-backed audience features
+   needed by comparison) — don't wire this to the database as a quick add-on.
+
+   The button bar is injected once (alongside injectLook() at the top of this
+   file) and lives outside #tabContent, so renderPublic()'s full-template
+   replace never touches it — it needs no state and never needs to
+   re-render. The floating layer the emoji rise through is the same pattern
+   as the fireworks canvas and the sold takeover: created on first use,
+   appended straight to <body>, each particle removes itself once its CSS
+   animation ends.
+
+   "Reset for every new bid" (handleAuctionTransition() above) means any
+   still-floating reactions are cleared out immediately whenever the lot
+   changes or a bid lands — clearReactions() is called from there, not here.
+
+   REACTION_EMOJI itself lives at the TOP of the file (next to the other
+   early state), not here next to the functions that use it — see that
+   declaration's own comment for why. */
+
+function reactionBarMarkup(){
+  return `
+  <div class="pv-reactions" role="group" aria-label="Send a reaction">
+    ${REACTION_EMOJI.map(e=>`<button type="button" class="pv-reaction-btn" onclick="sendReaction('${e}')" aria-label="React ${e}">${e}</button>`).join('')}
+  </div>`;
+}
+
+function injectReactionBar(){
+  if(typeof document === 'undefined') return;
+  if(document.getElementById('pvReactionBar')) return;
+  const el = document.createElement('div');
+  el.id = 'pvReactionBar';
+  el.innerHTML = reactionBarMarkup();
+  document.body.appendChild(el);
+}
+
+function reactionLayer(){
+  let layer = document.getElementById('pvReactionLayer');
+  if(!layer){
+    layer = document.createElement('div');
+    layer.id = 'pvReactionLayer';
+    layer.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(layer);
+  }
+  return layer;
+}
+
+/** Only ever called from a real onclick (a user gesture) — nothing here
+ *  fires on its own, unlike the audio features, so there's no autoplay
+ *  policy to work around. */
+function sendReaction(emoji){
+  if(typeof document === 'undefined') return;
+  const layer = reactionLayer();
+  const el = document.createElement('span');
+  el.className = 'pv-reaction-particle';
+  el.textContent = emoji;
+  el.setAttribute('aria-hidden', 'true');
+  // a little random horizontal placement + drift so a burst of taps spreads
+  // out across the screen instead of stacking in one column
+  el.style.left = (15 + Math.random()*70).toFixed(1) + '%';
+  el.style.setProperty('--pv-drift', (Math.random()*60 - 30).toFixed(1) + 'px');
+  layer.appendChild(el);
+  setTimeout(()=>{ el.remove(); }, 2600);
+}
+
+function clearReactions(){
+  if(typeof document === 'undefined') return;
+  const layer = document.getElementById('pvReactionLayer');
+  if(layer) layer.innerHTML = '';
 }
 
 /* ---------------- Render ---------------- */
@@ -283,8 +510,8 @@ function renderPublic(){
   c.innerHTML = `
     <div class="pv-scope container-xl px-3 px-md-4">
       ${renderStage(auc, player, leader, pendingLeft)}
-      ${renderResultsPanel('Live Results', 'Every player as they go under the hammer, newest first.')}
       ${renderTeamsPanel(teamsArr, 'Teams')}
+      ${renderResultsPanel('Live Results', 'Every player as they go under the hammer, newest first.')}
     </div>`;
 }
 
@@ -329,13 +556,18 @@ function renderStage(auc, player, leader, pendingLeft){
   return renderLiveLot(auc, player, leader);
 }
 
-/** The live lot: photo on the left, the bid — the headline — on the right. */
+/** The live lot: photo on the left, the bid — the headline — on the right.
+ *  `__justRevealed` (set for exactly one render by handleAuctionTransition())
+ *  adds a one-shot reveal animation class; `isBiddingWarActive()` adds a
+ *  "heating up" tag when several bids have landed in quick succession. */
 function renderLiveLot(auc, player, leader){
   const lotNo = pv.sales.length + 1;
   const hue = hueFor(player.category);
+  const warActive = isBiddingWarActive();
 
   return `
-  <section class="pv-panel pv-lot ${hue}">
+  <section class="pv-panel pv-lot ${hue}${__justRevealed ? ' is-revealing' : ''}">
+    ${warActive ? `<div class="pv-war-tag"><span class="pv-war-flame" aria-hidden="true">🔥</span>Bidding War!</div>` : ''}
     ${lotMarkup(player, {
       eyebrow: `<span class="pv-live-dot"></span>Lot ${lotNo} &middot; On the block`,
       price: auc.currentPrice || player.basePrice,
@@ -700,6 +932,48 @@ main{max-width:none; margin:22px auto 80px; padding:0;}
   box-shadow:0 0 12px rgba(255,159,10,.95); animation:pvPing 1.5s ease-in-out infinite;
 }
 
+/* ---- bidding war ---- */
+.pv-war-tag{
+  display:inline-flex; align-items:center; gap:6px;
+  margin-bottom:14px; padding:6px 14px; border-radius:999px;
+  font-size:12px; font-weight:680; letter-spacing:.2px; color:#FFD3A3;
+  background:rgba(255,105,26,.20);
+  box-shadow:inset 0 0 0 1px rgba(255,159,10,.5), 0 0 22px -8px rgba(255,105,26,.9);
+  animation:pvWarPulse 1.1s ease-in-out infinite;
+}
+.pv-war-flame{animation:pvWarFlame 1.1s ease-in-out infinite;}
+@keyframes pvWarPulse{0%,100%{box-shadow:inset 0 0 0 1px rgba(255,159,10,.5), 0 0 22px -8px rgba(255,105,26,.9);} 50%{box-shadow:inset 0 0 0 1px rgba(255,159,10,.8), 0 0 30px -6px rgba(255,105,26,1);}}
+@keyframes pvWarFlame{0%,100%{transform:scale(1) rotate(0deg);} 50%{transform:scale(1.18) rotate(-6deg);}}
+
+/* ---- player reveal ----
+   A one-shot animation when a genuinely new player comes on the block —
+   __justRevealed (public.js) is true for exactly one render, so this class
+   only ever appears on the FIRST render of a given lot, never on later
+   re-renders of the same one (a bid landing must not replay it). Scoped to
+   this page's own sheet rather than theme.css even though .pv-lot itself is
+   theme.css's: this modifier class is only ever added by this file, so
+   defining it elsewhere would be dead weight on moderator.html/team.html
+   (which never set it) — see CLAUDE.md §5 on why public-only behaviour
+   lives in this injected sheet, not the shared one. Loads after theme.css,
+   so it wins the cascade for this one modifier without needing !important. */
+.pv-lot.is-revealing .pv-photo-frame{animation:pvRevealPhoto .7s cubic-bezier(.2,.8,.3,1) both;}
+.pv-lot.is-revealing .pv-name{animation:pvRevealText .5s ease-out .15s both;}
+.pv-lot.is-revealing .pv-meta,
+.pv-lot.is-revealing .pv-bidblock{animation:pvRevealText .5s ease-out .28s both;}
+@keyframes pvRevealPhoto{
+  from{opacity:0; transform:scale(.88); filter:blur(14px);}
+  to{opacity:1; transform:scale(1); filter:blur(0);}
+}
+@keyframes pvRevealText{
+  from{opacity:0; transform:translateY(10px);}
+  to{opacity:1; transform:translateY(0);}
+}
+@media(prefers-reduced-motion:reduce){
+  .pv-war-tag, .pv-war-flame{animation:none;}
+  .pv-lot.is-revealing .pv-photo-frame, .pv-lot.is-revealing .pv-name,
+  .pv-lot.is-revealing .pv-meta, .pv-lot.is-revealing .pv-bidblock{animation:none;}
+}
+
 /* ---- home screen ---- */
 .pv-hero{padding:76px 30px; text-align:center;}
 @media(max-width:575.98px){ .pv-hero{padding:56px 22px;} }
@@ -760,6 +1034,22 @@ main{max-width:none; margin:22px auto 80px; padding:0;}
   margin:0 0 26px; color:var(--pv-orange-l);
   transform:rotate(-4deg);
   animation:pvStamp .42s cubic-bezier(.2,1.35,.4,1) both;
+}
+/* "New Record!" is a much longer stamp than "Sold" — the huge clamp + wide
+   tracking tuned for one short word would overflow the 600px card, so this
+   variant gets its own smaller scale rather than reusing .pv-takeover-stamp's
+   sizing outright. A richer, wider background glow on the overlay itself
+   (not just the card) makes the whole screen feel like a bigger moment. */
+.pv-takeover.is-record{
+  background:
+    radial-gradient(70% 62% at 50% 36%, rgba(228,174,73,.32), transparent 72%),
+    rgba(4,7,12,.92);
+}
+.pv-takeover-card.is-record .pv-takeover-stamp{
+  font-size:clamp(34px,7.2vw,68px); letter-spacing:2px; line-height:1.05;
+  background:linear-gradient(180deg,#FFF3D6 10%,var(--pv-orange-l) 55%,var(--pv-orange));
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  filter:drop-shadow(0 0 36px rgba(228,174,73,.6));
 }
 .pv-takeover-photo{
   display:block; width:168px; height:168px; margin:0 auto 24px;
@@ -916,6 +1206,56 @@ main{max-width:none; margin:22px auto 80px; padding:0;}
   .pv-no-bs .pv-scope .d-lg-table-cell{display:table-cell;}
 }
 @media(min-width:1200px){ .pv-no-bs .pv-scope .row.g-3 > *{width:33.333%;} }
+
+/* ---- spectator reactions ----
+   #pvReactionBar is injected once at load (injectReactionBar()) and lives
+   outside .pv-scope/#tabContent entirely, fixed to the viewport, so it
+   survives every renderPublic() re-render untouched. #pvReactionLayer is
+   created lazily on the first tap. */
+#pvReactionBar{
+  /* bottom-RIGHT corner, not centered — and NOT at the same 16px/16px spot
+     as #toastRoot (theme.css), which this page genuinely uses (the sound
+     enable/error toasts). bottom:88px clears a single toast's height plus
+     breathing room so the two never overlap; see the mobile override below
+     for why that number changes when #toastRoot becomes a full-width band. */
+  position:fixed; right:18px; bottom:88px; z-index:200;
+  display:flex; gap:8px; padding:8px; border-radius:999px;
+  background:rgba(10,13,20,.72);
+  -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.14), 0 18px 40px -16px rgba(0,0,0,.85);
+}
+.pv-reaction-btn{
+  width:42px; height:42px; border-radius:50%; padding:0;
+  display:flex; align-items:center; justify-content:center;
+  font-size:19px; line-height:1; cursor:pointer;
+  background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14);
+  transition:transform .15s ease, background .15s ease;
+}
+.pv-reaction-btn:hover{background:rgba(255,255,255,.14);}
+.pv-reaction-btn:active{transform:scale(.88);}
+#pvReactionLayer{position:fixed; inset:0; z-index:150; overflow:hidden; pointer-events:none;}
+.pv-reaction-particle{
+  position:absolute; bottom:70px; font-size:30px; line-height:1;
+  animation:pvReactionRise 2.6s ease-out forwards;
+}
+@keyframes pvReactionRise{
+  0%{opacity:0; transform:translate(0,0) scale(.6);}
+  12%{opacity:1; transform:translate(0,-6vh) scale(1);}
+  100%{opacity:0; transform:translate(var(--pv-drift,0),-62vh) scale(1);}
+}
+@media(max-width:575.98px){
+  /* #toastRoot also becomes a full-width band here (left:12px; right:12px;
+     bottom:12px; theme.css), not just a bottom-right corner box — still
+     needs clearance above it, just a little less since the bar itself is
+     smaller on this breakpoint too. right:12px matches that band's own
+     inset so the corner still lines up. */
+  #pvReactionBar{right:12px; bottom:78px; gap:6px; padding:6px;}
+  .pv-reaction-btn{width:38px; height:38px; font-size:17px;}
+}
+@media(prefers-reduced-motion:reduce){
+  .pv-reaction-particle{animation:pvReactionFade 1.4s ease-out forwards;}
+}
+@keyframes pvReactionFade{ from{opacity:1;} to{opacity:0;} }
 
 /* ---- no backdrop-filter: fall back to an opaque tint, keep the rim ---- */
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){

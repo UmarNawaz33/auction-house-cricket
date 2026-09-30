@@ -17,6 +17,15 @@
                        ctxFor(files, {pvApp:'admin'}) to load the files as if
                        <html data-pv-app="admin"> — i.e. as admin.html, which
                        must get its OWN Firebase instance.
+     db.ref(path)._trigger(value) — fires every callback the code under test
+                       registered via db.ref(path).on('value', cb), as if
+                       Firebase had just pushed `value`. Lets a test drive the
+                       REGISTERED listener itself (proving the wiring — right
+                       argument order, state actually updated, a flag actually
+                       reset afterward) rather than only the functions it
+                       calls. on('value', cb) otherwise still does nothing on
+                       its own, same as before this existed — a test that
+                       never calls _trigger() sees no behavior change.
      ctx.__auth      — control surface for the Firebase Auth stub; see below
    All reset per call to ctxFor(); nothing persists between tests.
 
@@ -44,7 +53,12 @@ function makeEl(){
     _html: '',
     set innerHTML(v){ this._html = String(v); },
     get innerHTML(){ return this._html; },
-    value: '', textContent: '', src: '', disabled: false, files: [], style: {},
+    value: '', textContent: '', src: '', disabled: false, files: [],
+    // enough of CSSStyleDeclaration for code that sets custom properties
+    // (element.style.setProperty('--x', v)) as well as plain ones
+    // (element.style.left = v) — a real browser's .style supports both;
+    // a bare {} only supports the second and throws on the first.
+    style: { setProperty(k,v){ this[k]=v; }, removeProperty(k){ delete this[k]; } },
     classList: { add(){}, remove(){}, toggle(){ return true; } },
     setAttribute(){}, appendChild(){}, remove(){}, querySelector(){ return makeEl(); },
   };
@@ -62,6 +76,7 @@ function ctxFor(files, opts){
   const audio = [];    // one src per play() call
   const appInits = []; // one entry per firebase.initializeApp(), by app name
   const elCache = {};
+  const valueListeners = {}; // refPath -> [cb, ...], for ref(path)._trigger() below
 
   const sandbox = {
     console, setTimeout: (fn) => { if (fn) fn(); return 0; }, clearTimeout,
@@ -104,8 +119,16 @@ function ctxFor(files, opts){
   };
 
   function ref(refPath){
+    const listeners = valueListeners[refPath] || (valueListeners[refPath] = []);
     return {
-      on(){}, once(){ return Promise.resolve({ val: () => null }); },
+      // on('value', cb) remembers cb instead of discarding it, so a test can
+      // later call ref(path)._trigger(val) to prove the REGISTERED callback
+      // itself is wired correctly (reads/writes the right state) — not just
+      // that the logic it calls works in isolation when invoked directly.
+      // Existing tests that never call _trigger() see no behavior change:
+      // on() was already a no-op as far as anything firing on its own.
+      on(event, cb){ if(event === 'value' && typeof cb === 'function') listeners.push(cb); },
+      once(){ return Promise.resolve({ val: () => null }); },
       set(value){ writes.push({ op: 'set', path: refPath, value }); return Promise.resolve(); },
       update(value){ writes.push({ op: 'update', path: refPath, value }); return Promise.resolve(); },
       remove(){ writes.push({ op: 'remove', path: refPath }); return Promise.resolve(); },
@@ -114,6 +137,7 @@ function ctxFor(files, opts){
       onDisconnect(){
         return { update(value){ writes.push({ op: 'onDisconnect', path: refPath, value }); return Promise.resolve(); } };
       },
+      _trigger(value){ listeners.slice().forEach(cb => cb({ val: () => value })); },
     };
   }
   // ---- Auth stub: real enough to test ordering and isAnonymous handling ----
