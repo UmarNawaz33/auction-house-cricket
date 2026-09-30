@@ -56,6 +56,13 @@ const REACTION_EMOJI = ['🔥','👏','😮','❤️','😂'];
 // re-render, so it's injected once here rather than living in renderPublic().
 injectReactionBar();
 
+// injectStageWash() is defined further down (Leader-color stage wash,
+// hoisted like the two above); its element is also injected once and then
+// only ever has classes toggled on it (updateStageWash(), called from
+// renderPublic()) — never destroyed/recreated, same reasoning as the
+// reaction bar.
+injectStageWash();
+
 /* ---------------- State ---------------- */
 
 let pv = { settings:{currencyUnit:'Cr'}, teams:{}, players:{}, auction:{}, sales:[] };
@@ -207,6 +214,44 @@ function registerBid(){
 }
 function isBiddingWarActive(){ return Date.now() < __biddingWarUntil; }
 
+/* ---------------- Leader-color stage wash ----------------
+   A full-viewport tint behind everything, coloured to whichever team is
+   CURRENTLY LEADING the lot — hueFor(leader.name), the exact same hashing
+   their team card/dot already uses, so the colour always matches. The
+   room's own mood shifts with who's winning, not just a number changing.
+
+   Injected once (alongside injectReactionBar() at the top of this file)
+   and from then on only ever has classes toggled on it (updateStageWash(),
+   called from renderPublic()) — never destroyed/recreated, so it survives
+   every #tabContent re-render untouched, same pattern as the reaction bar.
+   No leader (base price active, nobody's bid yet) means no wash — this is
+   about the CONTEST, not decoration for its own sake. */
+function injectStageWash(){
+  if(typeof document === 'undefined') return;
+  if(document.getElementById('pvStageWash')) return;
+  const el = document.createElement('div');
+  el.id = 'pvStageWash';
+  el.setAttribute('aria-hidden', 'true');
+  // appendChild, not insertBefore(…, firstChild) — DOM order doesn't matter
+  // here (z-index:-1 already puts it behind the page's normal, non-positioned
+  // content regardless of where in <body> it sits), and appendChild matches
+  // every other injected element in this file (the reaction bar/layer), so
+  // there's one pattern to remember, not two.
+  document.body.appendChild(el);
+}
+
+function updateStageWash(auc, leader){
+  if(typeof document === 'undefined') return;
+  const el = document.getElementById('pvStageWash');
+  if(!el) return;
+  PV_HUES.forEach(h => el.classList.remove(h));
+  const active = !!(leader && auc && auc.currentPlayerId && !isCompleted(auc));
+  if(!active){ el.classList.remove('is-active', 'is-war'); return; }
+  el.classList.add(hueFor(leader.name));
+  el.classList.add('is-active');
+  el.classList.toggle('is-war', isBiddingWarActive());
+}
+
 /**
  * TEMP FIREWORKS hook (piece 2 of 3 — see the "TEMPORARY FEATURE" block near
  * the foot of this file for the rest and how to remove it). Fires once per
@@ -264,7 +309,8 @@ function maybeCelebrateNewSale(sales){
       const isRecord = isNewRecord(newestSale);
       playPublicSoldSound();
       showSoldTakeover(newestSale, {isRecord});
-      celebrateSaleFirework();
+      celebrateSaleFirework(isRecord);
+      if(isRecord) screenShakeForRecord();
       updateRecord(newestSale);
     }
   }
@@ -494,6 +540,8 @@ function renderPublic(){
   const leader = auc.leaderTeamId ? pv.teams[auc.leaderTeamId] : null;
   const pendingLeft = Object.values(pv.players).filter(p=>p.status==='pending').length;
 
+  updateStageWash(auc, leader);
+
   // Bidding has been closed by the moderator: home screen, results on request.
   if(isCompleted(auc)){
     c.innerHTML = `
@@ -566,6 +614,7 @@ function renderLiveLot(auc, player, leader){
   const warActive = isBiddingWarActive();
 
   return `
+  ${callBannerMarkup(auc)}
   <section class="pv-panel pv-lot ${hue}${__justRevealed ? ' is-revealing' : ''}">
     ${warActive ? `<div class="pv-war-tag"><span class="pv-war-flame" aria-hidden="true">🔥</span>Bidding War!</div>` : ''}
     ${lotMarkup(player, {
@@ -679,25 +728,7 @@ function renderTeamsPanel(teamsArr, heading){
     </div>
     ${teamsArr.length===0
       ? `<div class="pv-empty">No teams yet.</div>`
-      : `<div class="row g-3">
-          ${teamsArr.map(t=>{
-            const rem = remainingOf(t);
-            const pct = t.budget ? Math.max(0,Math.min(100,(rem/t.budget)*100)) : 0;
-            const hue = hueFor(t.name);
-            return `
-            <div class="col-12 col-sm-6 col-xl-4">
-              <div class="pv-team h-100 ${hue}">
-                <div class="pv-team-head">
-                  <h3 class="pv-team-name"><span class="pv-dot ${hue}"></span>${t.name}</h3>
-                  <span class="pv-team-squad">${squadCountOf(t)} player${squadCountOf(t)===1?'':'s'}</span>
-                </div>
-                <div class="pv-team-purse">${money(rem)}</div>
-                <div class="pv-team-of">left of ${fmtMoney(t.budget)}</div>
-                <div class="pv-bar"><div class="pv-bar-fill ${hue}" style="width:${pct}%;"></div></div>
-              </div>
-            </div>`;
-          }).join('')}
-        </div>`}
+      : teamTilesMarkup(teamsArr)}
   </section>`;
 }
 
@@ -728,8 +759,15 @@ const TEMP_FIREWORKS_ENABLED = true;
  * A few staggered particle bursts across the top of the screen, drawn on a
  * throwaway full-viewport canvas that removes itself when the animation
  * ends. Self-contained: touches nothing but a canvas element it creates.
+ *
+ * `isRecord` (from maybeCelebrateNewSale's own isNewRecord() check) scales
+ * this up — more bursts, more particles per burst — so a record-breaking
+ * sale visibly reads as a BIGGER moment than a routine one, not just the
+ * same animation with different takeover text. Part of "record sale gets
+ * bigger than a normal sale", alongside screenShakeForRecord() below and
+ * the takeover's own pre-existing `.is-record` treatment.
  */
-function celebrateSaleFirework(){
+function celebrateSaleFirework(isRecord){
   if(!TEMP_FIREWORKS_ENABLED) return;
   if(typeof window === 'undefined' || typeof document === 'undefined') return;
   if(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -751,7 +789,7 @@ function celebrateSaleFirework(){
 
   function burst(x, y){
     const color = COLORS[Math.floor(Math.random()*COLORS.length)];
-    const count = 46 + Math.floor(Math.random()*18);
+    const count = (isRecord ? 70 : 46) + Math.floor(Math.random()*(isRecord ? 26 : 18));
     for(let i=0; i<count; i++){
       const angle = (Math.PI*2*i)/count + Math.random()*0.3;
       const speed = 2.6 + Math.random()*3.4;
@@ -769,7 +807,7 @@ function celebrateSaleFirework(){
   // driven with. burstsRemaining only ever counts down; frameCap is purely a
   // defensive ceiling so a stray float-precision particle can't wedge the
   // loop open forever.
-  const burstCount = 4 + Math.floor(Math.random()*3);
+  const burstCount = (isRecord ? 7 : 4) + Math.floor(Math.random()*3);
   let burstsRemaining = burstCount;
   const burstTimers = [];
   for(let i=0; i<burstCount; i++){
@@ -818,6 +856,20 @@ function celebrateSaleFirework(){
   rafId = requestAnimationFrame(frame);
 }
 /* ============ END temporary fireworks feature ============ */
+
+/** A brief screen-shake for a record-breaking sale only (maybeCelebrateNewSale,
+ *  gated on isNewRecord()) — NOT part of the temporary fireworks feature above
+ *  and not removed alongside it; it's the other half of "record sale gets
+ *  bigger than a normal sale", independent of whether TEMP_FIREWORKS_ENABLED
+ *  is on. Adds a short CSS animation class to <body> and removes it once the
+ *  animation is done; respects prefers-reduced-motion like everything else
+ *  here. */
+function screenShakeForRecord(){
+  if(typeof document === 'undefined' || !document.body || !document.body.classList) return; // the test stub's <body> has no classList
+  if(typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  document.body.classList.add('pv-shake');
+  setTimeout(()=>{ document.body.classList.remove('pv-shake'); }, 650);
+}
 
 /* ============================================================
    The sheet. Injected from here so index.html and
@@ -955,14 +1007,39 @@ main{max-width:none; margin:22px auto 80px; padding:0;}
    defining it elsewhere would be dead weight on moderator.html/team.html
    (which never set it) — see CLAUDE.md §5 on why public-only behaviour
    lives in this injected sheet, not the shared one. Loads after theme.css,
-   so it wins the cascade for this one modifier without needing !important. */
-.pv-lot.is-revealing .pv-photo-frame{animation:pvRevealPhoto .7s cubic-bezier(.2,.8,.3,1) both;}
+   so it wins the cascade for this one modifier without needing !important.
+
+   Theatrical version: the whole panel gets a brief gold flash-ring, the
+   photo brightens/blurs in rather than just fading, and a diagonal light
+   sweep crosses it once (a ::after pseudo-element, so no extra markup) —
+   like a spotlight finding the player, not just an opacity fade. The text
+   stagger (name, then meta+bid) is unchanged. */
+.pv-lot.is-revealing{animation:pvRevealFlash .6s ease-out both;}
+.pv-lot.is-revealing .pv-photo-frame{position:relative; overflow:hidden; animation:pvRevealPhoto .8s cubic-bezier(.2,.8,.3,1) both;}
+.pv-lot.is-revealing .pv-photo-frame::after{
+  content:''; position:absolute; inset:0; z-index:1; pointer-events:none;
+  background:linear-gradient(115deg, transparent 32%, rgba(255,255,255,.65) 48%, transparent 64%);
+  transform:translateX(-140%);
+  animation:pvRevealSweep .9s cubic-bezier(.3,.7,.2,1) .1s both;
+}
 .pv-lot.is-revealing .pv-name{animation:pvRevealText .5s ease-out .15s both;}
 .pv-lot.is-revealing .pv-meta,
 .pv-lot.is-revealing .pv-bidblock{animation:pvRevealText .5s ease-out .28s both;}
+@keyframes pvRevealFlash{
+  0%{box-shadow:inset 0 0 0 2px rgba(228,174,73,0), 0 0 0 rgba(228,174,73,0);}
+  22%{box-shadow:inset 0 0 0 2px rgba(228,174,73,.85), 0 0 70px -12px rgba(228,174,73,.85);}
+  100%{box-shadow:inset 0 0 0 2px rgba(228,174,73,0), 0 0 0 rgba(228,174,73,0);}
+}
 @keyframes pvRevealPhoto{
-  from{opacity:0; transform:scale(.88); filter:blur(14px);}
-  to{opacity:1; transform:scale(1); filter:blur(0);}
+  0%{opacity:0; transform:scale(.82); filter:blur(18px) brightness(1.7);}
+  55%{opacity:1; filter:blur(0) brightness(1.2);}
+  100%{opacity:1; transform:scale(1); filter:blur(0) brightness(1);}
+}
+@keyframes pvRevealSweep{
+  0%{transform:translateX(-140%); opacity:0;}
+  15%{opacity:1;}
+  60%{opacity:1;}
+  100%{transform:translateX(140%); opacity:0;}
 }
 @keyframes pvRevealText{
   from{opacity:0; transform:translateY(10px);}
@@ -970,9 +1047,101 @@ main{max-width:none; margin:22px auto 80px; padding:0;}
 }
 @media(prefers-reduced-motion:reduce){
   .pv-war-tag, .pv-war-flame{animation:none;}
+  .pv-lot.is-revealing{animation:none;}
   .pv-lot.is-revealing .pv-photo-frame, .pv-lot.is-revealing .pv-name,
   .pv-lot.is-revealing .pv-meta, .pv-lot.is-revealing .pv-bidblock{animation:none;}
+  .pv-lot.is-revealing .pv-photo-frame::after{display:none;}
 }
+
+/* ---- leader-color stage wash ----
+   injectStageWash()/updateStageWash() (above, this file) manage #pvStageWash
+   — a full-viewport tint behind everything, coloured to whichever team is
+   currently leading (hueFor(leader.name), same hashing as their team card).
+   z-index:-1 puts it behind theme.css's header (z-index:50) and this page's
+   own static #tabContent/main content (ordinary, non-positioned flow sits
+   above a negative-z-index sibling in CSS's stacking order) — it only shows
+   through the gaps around and between panels, and faintly through their
+   semi-opaque backgrounds, as a mood wash rather than a hard color block.
+   pointer-events:none so it can never intercept a tap.
+
+   ONE radial gradient, same as the original — sized larger than the
+   65% 55% it started at, then dialed back down once by request ("30% less
+   area" than the 180% 150% it briefly reached): area scales with the
+   PRODUCT of the two ellipse dimensions, so shrinking both by the same
+   linear factor of sqrt(0.7)≈0.837 shrinks the area by 30% — 180%→150%,
+   150%→125%. Falloff stays at 88% (a softer, further-out fade than the
+   original 70%) and the animation itself is unchanged (same pvWashPulse
+   keyframe, same opacity levels) — only the gradient's size has moved,
+   twice now. If asked to resize this again, keep it ONE gradient and scale
+   both numbers by the same factor — don't reintroduce the two-gradient
+   (top+bottom) version tried in an earlier revision. */
+#pvStageWash{
+  position:fixed; inset:0; z-index:-1; pointer-events:none;
+  opacity:0; transition:opacity .6s ease;
+  background:radial-gradient(150% 125% at 50% 0%, var(--pv-wash, transparent), transparent 88%);
+}
+#pvStageWash.is-active{opacity:.5;}
+#pvStageWash.is-war{opacity:.8; animation:pvWashPulse 1.1s ease-in-out infinite;}
+#pvStageWash.hue-blue  {--pv-wash: rgba(59,130,246,.9);}
+#pvStageWash.hue-green {--pv-wash: rgba(48,209,88,.9);}
+#pvStageWash.hue-purple{--pv-wash: rgba(139,92,246,.9);}
+#pvStageWash.hue-orange{--pv-wash: rgba(228,174,73,.9);}
+#pvStageWash.hue-pink  {--pv-wash: rgba(251,90,107,.9);}
+#pvStageWash.hue-teal  {--pv-wash: rgba(20,184,166,.9);}
+@keyframes pvWashPulse{0%,100%{opacity:.5;} 50%{opacity:.85;}}
+@media(prefers-reduced-motion:reduce){
+  #pvStageWash{transition:none;}
+  #pvStageWash.is-war{animation:none;}
+}
+
+/* ---- leader capsule, tinted to the leading team's own color ----
+   lotMarkup() (shared.js) adds hueFor(leader.name) to the capsule
+   unconditionally; theme.css keeps the original fixed green as the base
+   look for moderator.js/team.js, and this page's sheet is the only one
+   that overrides per hue — so "Leading Lions" reads in Lions' own blue
+   here, matching the same team's dot/tile colour in the Teams panel below,
+   while moderator.js/team.js keep the plain green. hue-green needs no rule
+   of its own: it's already theme.css's default. */
+.pv-leader.is-leading.hue-blue{background:rgba(59,130,246,.16); box-shadow:inset 0 0 0 1px rgba(59,130,246,.4);}
+.pv-leader.is-leading.hue-blue .pv-leader-dot{background:var(--pv-blue); box-shadow:0 0 12px rgba(59,130,246,.9);}
+.pv-leader.is-leading.hue-blue .pv-leader-name{color:var(--pv-blue-l);}
+.pv-leader.is-leading.hue-blue .pv-leader-label{color:rgba(127,176,255,.85);}
+
+.pv-leader.is-leading.hue-purple{background:rgba(139,92,246,.16); box-shadow:inset 0 0 0 1px rgba(139,92,246,.4);}
+.pv-leader.is-leading.hue-purple .pv-leader-dot{background:var(--pv-purple); box-shadow:0 0 12px rgba(139,92,246,.9);}
+.pv-leader.is-leading.hue-purple .pv-leader-name{color:var(--pv-purple-l);}
+.pv-leader.is-leading.hue-purple .pv-leader-label{color:rgba(184,162,255,.85);}
+
+.pv-leader.is-leading.hue-orange{background:rgba(228,174,73,.16); box-shadow:inset 0 0 0 1px rgba(228,174,73,.4);}
+.pv-leader.is-leading.hue-orange .pv-leader-dot{background:var(--pv-orange); box-shadow:0 0 12px rgba(228,174,73,.9);}
+.pv-leader.is-leading.hue-orange .pv-leader-name{color:var(--pv-orange-l);}
+.pv-leader.is-leading.hue-orange .pv-leader-label{color:rgba(243,205,132,.85);}
+
+.pv-leader.is-leading.hue-pink{background:rgba(251,90,107,.16); box-shadow:inset 0 0 0 1px rgba(251,90,107,.4);}
+.pv-leader.is-leading.hue-pink .pv-leader-dot{background:var(--pv-pink); box-shadow:0 0 12px rgba(251,90,107,.9);}
+.pv-leader.is-leading.hue-pink .pv-leader-name{color:var(--pv-pink-l);}
+.pv-leader.is-leading.hue-pink .pv-leader-label{color:rgba(255,151,160,.85);}
+
+.pv-leader.is-leading.hue-teal{background:rgba(20,184,166,.16); box-shadow:inset 0 0 0 1px rgba(20,184,166,.4);}
+.pv-leader.is-leading.hue-teal .pv-leader-dot{background:var(--pv-teal); box-shadow:0 0 12px rgba(20,184,166,.9);}
+.pv-leader.is-leading.hue-teal .pv-leader-name{color:var(--pv-teal-l);}
+.pv-leader.is-leading.hue-teal .pv-leader-label{color:rgba(94,234,212,.85);}
+
+/* ---- record-sale screen shake ----
+   screenShakeForRecord() (above, this file) adds/removes this on <body> —
+   the other half of "record sale gets bigger than a normal sale", alongside
+   the bigger firework burst in celebrateSaleFirework(isRecord) and the
+   takeover's own pre-existing .is-record treatment. Not scoped under
+   .pv-scope since it targets <body> itself. */
+@keyframes pvShake{
+  0%,100%{transform:translate(0,0);}
+  20%{transform:translate(-8px,2px) rotate(-.3deg);}
+  40%{transform:translate(7px,-3px) rotate(.3deg);}
+  60%{transform:translate(-6px,3px) rotate(-.2deg);}
+  80%{transform:translate(5px,-2px) rotate(.2deg);}
+}
+body.pv-shake{animation:pvShake .55s cubic-bezier(.36,.07,.19,.97) both;}
+@media(prefers-reduced-motion:reduce){ body.pv-shake{animation:none;} }
 
 /* ---- home screen ---- */
 .pv-hero{padding:76px 30px; text-align:center;}
@@ -1147,42 +1316,6 @@ main{max-width:none; margin:22px auto 80px; padding:0;}
   .pv-player-name{font-size:13px;}
 }
 
-/* ---- team cards: inner glass, concentric with the panel ---- */
-.pv-team{
-  position:relative;
-  padding:18px; border-radius:var(--pv-r-in);
-  background:linear-gradient(152deg, rgba(255,255,255,.11), rgba(255,255,255,.04));
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.13), inset 0 1px 0 rgba(255,255,255,.22);
-  transition:transform .2s ease, box-shadow .2s ease;
-}
-.pv-team:hover{transform:translateY(-2px); box-shadow:inset 0 0 0 1px rgba(255,255,255,.22), inset 0 1px 0 rgba(255,255,255,.3), 0 16px 32px -18px rgba(0,0,0,.9);}
-.pv-team-head{display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:14px;}
-.pv-team-name{
-  display:flex; align-items:center; gap:8px;
-  font-size:14.5px; font-weight:640; letter-spacing:-.2px; margin:0; color:#fff;
-}
-.pv-team-squad{font-size:12px; color:var(--pv-ink-3); white-space:nowrap;}
-.pv-dot{width:9px; height:9px; border-radius:50%; flex-shrink:0;}
-.pv-dot.hue-blue  {background:var(--pv-blue);   box-shadow:0 0 12px rgba(10,132,255,.95);}
-.pv-dot.hue-green {background:var(--pv-green);  box-shadow:0 0 12px rgba(48,209,88,.95);}
-.pv-dot.hue-purple{background:var(--pv-purple); box-shadow:0 0 12px rgba(191,90,242,.95);}
-.pv-dot.hue-orange{background:var(--pv-orange); box-shadow:0 0 12px rgba(255,159,10,.95);}
-.pv-dot.hue-pink  {background:var(--pv-pink);   box-shadow:0 0 12px rgba(255,55,95,.95);}
-.pv-dot.hue-teal  {background:var(--pv-teal);   box-shadow:0 0 12px rgba(64,200,224,.95);}
-.pv-team-purse{
-  font-size:27px; font-weight:660; letter-spacing:-1px; line-height:1;
-  color:#fff; font-variant-numeric:tabular-nums;
-}
-.pv-team-purse .pv-unit{font-size:14px; font-weight:580; color:var(--pv-ink-3); margin-left:4px; letter-spacing:0;}
-.pv-team-of{font-size:12px; color:var(--pv-ink-3); margin-top:5px;}
-.pv-bar{height:5px; border-radius:999px; background:rgba(0,0,0,.4); overflow:hidden; margin-top:14px; box-shadow:inset 0 1px 2px rgba(0,0,0,.5);}
-.pv-bar-fill{height:100%; border-radius:999px; transition:width .45s cubic-bezier(.4,0,.2,1); background:linear-gradient(90deg,var(--pv-blue-l),var(--pv-blue));}
-.pv-bar-fill.hue-blue  {background:linear-gradient(90deg,var(--pv-blue-l),var(--pv-blue));     box-shadow:0 0 12px -2px rgba(10,132,255,.9);}
-.pv-bar-fill.hue-green {background:linear-gradient(90deg,var(--pv-green-l),var(--pv-green));   box-shadow:0 0 12px -2px rgba(48,209,88,.9);}
-.pv-bar-fill.hue-purple{background:linear-gradient(90deg,var(--pv-purple-l),var(--pv-purple)); box-shadow:0 0 12px -2px rgba(191,90,242,.9);}
-.pv-bar-fill.hue-orange{background:linear-gradient(90deg,var(--pv-orange-l),var(--pv-orange)); box-shadow:0 0 12px -2px rgba(255,159,10,.9);}
-.pv-bar-fill.hue-pink  {background:linear-gradient(90deg,var(--pv-pink-l),var(--pv-pink));     box-shadow:0 0 12px -2px rgba(255,55,95,.9);}
-.pv-bar-fill.hue-teal  {background:linear-gradient(90deg,var(--pv-teal-l),var(--pv-teal));     box-shadow:0 0 12px -2px rgba(64,200,224,.9);}
 
 /* ---- empty states ---- */
 .pv-empty{text-align:center; padding:40px 20px; color:var(--pv-ink-3); font-size:13.5px;}
@@ -1219,11 +1352,17 @@ main{max-width:none; margin:22px auto 80px; padding:0;}
      breathing room so the two never overlap; see the mobile override below
      for why that number changes when #toastRoot becomes a full-width band. */
   position:fixed; right:18px; bottom:88px; z-index:200;
-  display:flex; gap:8px; padding:8px; border-radius:999px;
+  padding:8px; border-radius:999px;
   background:rgba(10,13,20,.72);
   -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.14), 0 18px 40px -16px rgba(0,0,0,.85);
 }
+/* the actual stack: #pvReactionBar's only child is this wrapper
+   (reactionBarMarkup()), not the buttons directly — the layout has to live
+   here, not on #pvReactionBar, since a flex container only arranges its
+   OWN direct children. Deliberately column (buttons stacked vertically),
+   by request. */
+.pv-reactions{display:flex; flex-direction:column; gap:8px;}
 .pv-reaction-btn{
   width:42px; height:42px; border-radius:50%; padding:0;
   display:flex; align-items:center; justify-content:center;

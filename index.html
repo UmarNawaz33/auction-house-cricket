@@ -23,7 +23,12 @@
         <small id="connBadge">Cricket Player Auction — Live View</small>
       </div>
     </div>
-    <div class="top-actions">
+    <button class="pv-actions-burger" type="button"
+            aria-controls="topActions" aria-expanded="false" aria-label="Toggle menu"
+            onclick="toggleTabMenu(this)">
+      <span class="pv-burger-bars" aria-hidden="true"><i></i><i></i><i></i></span>
+    </button>
+    <div class="top-actions" id="topActions">
       <!-- Browsers block audio on this page until a real click happens on
            it — nobody normally clicks the big screen. One click here
            unlocks the sold sound for the rest of this tab; see

@@ -93,11 +93,13 @@ function renderDashboard(){
 
   return `
   <div class="chip-row">
+    <div class="chip"><div class="val">${team.name}</div><div class="lbl">My Team</div></div>
     <div class="chip"><div class="val">${fmtMoney(rem)}</div><div class="lbl">Purse Remaining</div></div>
     <div class="chip"><div class="val">${squadEntries.length}</div><div class="lbl">Squad Size</div></div>
   </div>
 
   ${renderTeamStatusBanner(auc)}
+  ${callBannerMarkup(auc)}
 
   ${player ? `
   <div class="card pv-lot">
@@ -185,7 +187,10 @@ async function placeMyBid(steps){
   const nextPrice = bidPriceFor(auc, player, tstate.settings, steps);
   if(!teamCanAffordBid(team, tstate.settings, nextPrice)){ toast('You cannot afford this bid.', 'error'); return; }
   try{
-    await db.ref('auction').update({currentPrice:nextPrice, leaderTeamId:team.id, updatedAt:Date.now()});
+    // callState:null — a fresh bid means whatever the moderator was calling
+    // ("going once…") no longer applies; see moderator.js's callOnce()/
+    // callTwice() comment for the full list of writes that cancel a call.
+    await db.ref('auction').update({currentPrice:nextPrice, leaderTeamId:team.id, callState:null, updatedAt:Date.now()});
     toast('Bid placed: '+fmtMoney(nextPrice), 'success');
   }catch(e){
     toast('Bid failed — someone may have just outbid you.', 'error');

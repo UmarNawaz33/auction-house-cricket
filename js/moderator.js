@@ -50,7 +50,7 @@ async function doSignOut(){
 async function pauseSession(reason){
   if(!sessionInProgress(mstate.auction)) return; // nothing running
   await db.ref('auction').update({
-    paused:true, biddingOpen:false, pausedAt:Date.now(), pauseReason:reason||'manual'
+    paused:true, biddingOpen:false, pausedAt:Date.now(), pauseReason:reason||'manual', callState:null
   });
 }
 
@@ -96,7 +96,7 @@ async function completeBidding(){
   await db.ref('auction').update({
     currentPlayerId:null, currentPrice:0, leaderTeamId:null,
     biddingOpen:false, paused:false, pausedAt:null, pauseReason:null,
-    awaitingNext:false, excludeId:null, lastResult:null,
+    awaitingNext:false, excludeId:null, lastResult:null, callState:null,
     completed:true, completedAt:Date.now(), updatedAt:Date.now()
   });
   toast('Bidding complete. The live view is back on its home screen.', 'success');
@@ -106,7 +106,7 @@ async function reopenAuction(){
   await db.ref('auction').update({
     completed:false, completedAt:null,
     awaitingNext:false, paused:false, pausedAt:null, pauseReason:null,
-    biddingOpen:false, updatedAt:Date.now()
+    biddingOpen:false, callState:null, updatedAt:Date.now()
   });
   toast('Auction reopened — put up a player to start bidding again.', 'success');
 }
@@ -183,7 +183,7 @@ function attachListeners(){
  * creates a new anonymous uid.
  */
 function armDisconnectPause(){
-  db.ref('auction').onDisconnect().update({paused:true, biddingOpen:false, pauseReason:'disconnect'});
+  db.ref('auction').onDisconnect().update({paused:true, biddingOpen:false, pauseReason:'disconnect', callState:null});
 }
 function defaultSettings(){
   return {numTeams:8, defaultBudget:100, defaultBasePrice:5, bidIncrement:1, maxPlayersPerTeam:18, minPlayersPerTeam:14, currencyUnit:'Cr'};
@@ -686,6 +686,12 @@ function renderAuction(){
               <button onclick="skipPlayer()">⏭ Skip For Now</button>
               <button onclick="resetBid()" ${!leader?'disabled':''}>↺ Reset Bid</button>
             </div>
+            <div class="floor-controls" style="margin-top:10px;align-items:center;">
+              <button onclick="callOnce()" ${!leader||paused?'disabled':''}>🔨 Going Once</button>
+              <button onclick="callTwice()" ${!leader||paused?'disabled':''}>🔨 Going Twice</button>
+              ${auc.callState ? `<button class="ghost" onclick="cancelCall()">✖ Cancel Call</button>
+                <span class="hint" style="font-weight:700;color:var(--pv-orange-l);">Calling: ${auc.callState==='twice'?'GOING TWICE':'GOING ONCE'} — shown on the big screen and team portals</span>` : ''}
+            </div>
             <div class="floor-controls" style="margin-top:10px;">
               ${paused
                 ? `<button class="primary" onclick="resumeSession()">▶ Resume Bidding</button>`
@@ -759,11 +765,31 @@ async function nextPlayer(){
 async function holdForNext(record, extra){
   await db.ref('auction').update(Object.assign({
     currentPlayerId:null, currentPrice:0, leaderTeamId:null,
-    biddingOpen:false, awaitingNext:true, lastResult:record, updatedAt:Date.now()
+    biddingOpen:false, awaitingNext:true, lastResult:record, callState:null, updatedAt:Date.now()
   }, extra||{}));
 }
 
-async function resetBid(){ await db.ref('auction').update({currentPrice:0, leaderTeamId:null}); }
+async function resetBid(){ await db.ref('auction').update({currentPrice:0, leaderTeamId:null, callState:null}); }
+
+/* ---------------- "Going once… going twice…" ----------------
+   A dramatic call ahead of SOLD — callBannerMarkup() (shared.js) renders it
+   on public.js and team.js, reading auction.callState ('once'|'twice'|null).
+   These three functions are the ONLY writers of that field; every other
+   write to `auction` elsewhere in this file (and team.js's placeMyBid())
+   clears it back to null, so a call can never linger past the moment it
+   applies to — a new bid, a pause, ending the lot, or ending the session
+   all silently cancel it. See CLAUDE.md §3 for the full list. */
+async function callOnce(){
+  if(!mstate.auction || !mstate.auction.leaderTeamId) return; // nothing to call on — no bid yet
+  await db.ref('auction').update({callState:'once'});
+}
+async function callTwice(){
+  if(!mstate.auction || !mstate.auction.leaderTeamId) return;
+  await db.ref('auction').update({callState:'twice'});
+}
+async function cancelCall(){
+  await db.ref('auction').update({callState:null});
+}
 
 /* The hammer sound for a completed sale.
    Two things decide how this is written:

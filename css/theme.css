@@ -155,18 +155,57 @@ nav.tabs .navbar-nav{gap:6px; flex-wrap:wrap;}
      one right where this sits */
   -webkit-backdrop-filter:none; backdrop-filter:none;
 }
-.pv-burger:focus{box-shadow:0 0 0 3px rgba(228,174,73,.35);}
+.pv-burger:focus, .pv-actions-burger:focus{box-shadow:0 0 0 3px rgba(228,174,73,.35);}
 .pv-burger-bars{display:inline-flex; flex-direction:column; gap:3.5px; width:17px;}
 .pv-burger-bars i{display:block; height:2px; border-radius:2px; background:#fff; transition:transform .2s ease, opacity .2s ease;}
-.pv-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(1){transform:translateY(5.5px) rotate(45deg);}
-.pv-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(2){opacity:0;}
-.pv-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(3){transform:translateY(-5.5px) rotate(-45deg);}
+.pv-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(1),
+.pv-actions-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(1){transform:translateY(5.5px) rotate(45deg);}
+.pv-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(2),
+.pv-actions-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(2){opacity:0;}
+.pv-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(3),
+.pv-actions-burger[aria-expanded="true"] .pv-burger-bars i:nth-child(3){transform:translateY(-5.5px) rotate(-45deg);}
 .pv-burger-text{letter-spacing:-.1px;}
 /* if the Bootstrap CDN is unreachable there is no .collapse/.navbar-expand
    CSS, so the list would show permanently alongside a dead burger. Hide the
    burger and lay the tabs out ourselves. */
 .pv-no-bs .pv-burger{display:none;}
 .pv-no-bs nav.tabs .navbar-nav{display:flex; flex-direction:row; flex-wrap:wrap; gap:6px;}
+
+/* ---- top-actions: the header's right-hand button cluster (sign out +
+   session info on team/moderator/admin, the sound toggle + login links on
+   index.html) collapses behind its own hamburger on phone widths, on all
+   four pages. Deliberately self-contained — no Bootstrap .navbar/
+   .navbar-expand-lg/.collapse like nav.tabs above — because index.html and
+   team.html have no navbar element to hang Bootstrap's breakpoint CSS off
+   of; it only ever needs one breakpoint plus a .show toggle, and
+   toggleTabMenu (shared.js) already generalizes to drive it by reading
+   aria-controls, so no second handler was needed. The button targets
+   #topActions directly (aria-controls="topActions"), so unlike nav.tabs
+   there's no separate menu wrapper id.
+   Deliberately its OWN class, not `.pv-burger` — it duplicates a few of
+   that class's chrome properties below rather than sharing it, because
+   `.pv-no-bs .pv-burger{display:none}` (above) is the Bootstrap-CDN-down
+   fallback for the TABS burger specifically, which genuinely can't work
+   without Bootstrap's `.collapse` CSS; this burger has no such dependency
+   and must stay usable even when that CDN is unreachable, so it must not
+   match that selector. */
+.pv-actions-burger{
+  display:none; align-items:center; gap:11px;
+  padding:9px 16px; border-radius:10px;
+  background:rgba(255,255,255,.06); border:1px solid var(--line-strong);
+  color:#fff; font-size:13px; font-weight:600;
+  -webkit-backdrop-filter:none; backdrop-filter:none;
+}
+@media(max-width:575.98px){
+  .pv-actions-burger{display:inline-flex;}
+  .top-row > .top-actions{
+    display:none; width:100%; flex-direction:column; align-items:stretch;
+    margin-top:14px; padding-top:14px; border-top:1px solid var(--line);
+  }
+  .top-row > .top-actions.show{display:flex;}
+  .top-row > .top-actions button{width:100%;}
+  .top-row > .top-actions .session-info{margin:0 0 4px;}
+}
 
 nav.tabs button{
   font-family:var(--font-display); text-transform:uppercase; letter-spacing:.5px;
@@ -568,6 +607,90 @@ tr:hover td{background:rgba(255,255,255,.03);}
   color:#8BF0AC;
 }
 .pv-leader-none{color:var(--pv-ink-3);}
+
+/* ---- team tiles: inner glass, concentric with whatever panel holds them ----
+   teamTilesMarkup() (shared.js) — one block per team, purse remaining as
+   the headline plus a drain bar, colour-hashed via hueFor(t.name). Used by
+   public.js's renderTeamsPanel() (wrapped in a .pv-panel) AND team.js's own
+   Teams card (wrapped in the native .card/<h2> team.html already uses
+   elsewhere) — moved here from public.js's own sheet once both pages
+   needed it, same reasoning as .pv-lot* above. The hue glow colours below
+   match --pv-blue/--pv-purple/--pv-orange/--pv-pink/--pv-teal exactly (they
+   didn't before this move — the original public.js version had drifted to
+   an older palette's accent colours, e.g. rgba(10,132,255,…) for "blue"
+   instead of this theme's #3B82F6; fixed while relocating, since a stray
+   glow colour would otherwise undercut the whole point of colour-matching
+   a team everywhere it appears). */
+.pv-team{
+  position:relative;
+  padding:18px; border-radius:var(--pv-r-in);
+  background:linear-gradient(152deg, rgba(255,255,255,.11), rgba(255,255,255,.04));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.13), inset 0 1px 0 rgba(255,255,255,.22);
+  transition:transform .2s ease, box-shadow .2s ease;
+}
+.pv-team:hover{transform:translateY(-2px); box-shadow:inset 0 0 0 1px rgba(255,255,255,.22), inset 0 1px 0 rgba(255,255,255,.3), 0 16px 32px -18px rgba(0,0,0,.9);}
+.pv-team-head{display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:14px;}
+.pv-team-name{
+  display:flex; align-items:center; gap:8px;
+  font-size:14.5px; font-weight:640; letter-spacing:-.2px; margin:0; color:#fff;
+}
+.pv-team-squad{font-size:12px; color:var(--pv-ink-3); white-space:nowrap;}
+.pv-dot{width:9px; height:9px; border-radius:50%; flex-shrink:0;}
+.pv-dot.hue-blue  {background:var(--pv-blue);   box-shadow:0 0 12px rgba(59,130,246,.95);}
+.pv-dot.hue-green {background:var(--pv-green);  box-shadow:0 0 12px rgba(48,209,88,.95);}
+.pv-dot.hue-purple{background:var(--pv-purple); box-shadow:0 0 12px rgba(139,92,246,.95);}
+.pv-dot.hue-orange{background:var(--pv-orange); box-shadow:0 0 12px rgba(228,174,73,.95);}
+.pv-dot.hue-pink  {background:var(--pv-pink);   box-shadow:0 0 12px rgba(251,90,107,.95);}
+.pv-dot.hue-teal  {background:var(--pv-teal);   box-shadow:0 0 12px rgba(20,184,166,.95);}
+.pv-team-purse{
+  font-size:27px; font-weight:660; letter-spacing:-1px; line-height:1;
+  color:#fff; font-variant-numeric:tabular-nums;
+}
+.pv-team-purse .pv-unit{font-size:14px; font-weight:580; color:var(--pv-ink-3); margin-left:4px; letter-spacing:0;}
+.pv-team-of{font-size:12px; color:var(--pv-ink-3); margin-top:5px;}
+.pv-bar{height:5px; border-radius:999px; background:rgba(0,0,0,.4); overflow:hidden; margin-top:14px; box-shadow:inset 0 1px 2px rgba(0,0,0,.5);}
+.pv-bar-fill{height:100%; border-radius:999px; transition:width .45s cubic-bezier(.4,0,.2,1); background:linear-gradient(90deg,var(--pv-blue-l),var(--pv-blue));}
+.pv-bar-fill.hue-blue  {background:linear-gradient(90deg,var(--pv-blue-l),var(--pv-blue));     box-shadow:0 0 12px -2px rgba(59,130,246,.9);}
+.pv-bar-fill.hue-green {background:linear-gradient(90deg,var(--pv-green-l),var(--pv-green));   box-shadow:0 0 12px -2px rgba(48,209,88,.9);}
+.pv-bar-fill.hue-purple{background:linear-gradient(90deg,var(--pv-purple-l),var(--pv-purple)); box-shadow:0 0 12px -2px rgba(139,92,246,.9);}
+.pv-bar-fill.hue-orange{background:linear-gradient(90deg,var(--pv-orange-l),var(--pv-orange)); box-shadow:0 0 12px -2px rgba(228,174,73,.9);}
+.pv-bar-fill.hue-pink  {background:linear-gradient(90deg,var(--pv-pink-l),var(--pv-pink));     box-shadow:0 0 12px -2px rgba(251,90,107,.9);}
+.pv-bar-fill.hue-teal  {background:linear-gradient(90deg,var(--pv-teal-l),var(--pv-teal));     box-shadow:0 0 12px -2px rgba(20,184,166,.9);}
+
+/* ---- "going once / going twice" call banner ----
+   Driven purely by auction.callState (moderator.js's callOnce/callTwice/
+   cancelCall — see CLAUDE.md §3) via callBannerMarkup() (above, this file)
+   — no local timer or DOM lifecycle of its own, unlike the sold takeover in
+   public.js: it's just conditionally included in the normal template-replace
+   render on public.js AND team.js, so it appears/disappears in lockstep with
+   Firebase state on every ordinary re-render. Shared here rather than in
+   either page's own injected sheet because BOTH use it. pointer-events:none
+   so it never blocks anything underneath (the reaction bar, a bid button). */
+.pv-call-banner{
+  position:fixed; inset:0; z-index:8000; pointer-events:none;
+  display:flex; align-items:center; justify-content:center; padding:24px;
+  background:radial-gradient(60% 50% at 50% 50%, rgba(255,69,58,.22), transparent 70%);
+  animation:pvCallFade .25s ease-out both;
+}
+.pv-call-text{
+  font-family:var(--font-display); text-transform:uppercase; text-align:center;
+  font-size:clamp(44px,10vw,140px); font-weight:700; letter-spacing:4px; line-height:1;
+  color:#fff; text-shadow:0 0 40px rgba(255,69,58,.85), 0 4px 0 rgba(0,0,0,.4);
+  animation:pvCallPulse 1s ease-in-out infinite;
+}
+.pv-call-banner.twice .pv-call-text{
+  color:#FFD3A3;
+  text-shadow:0 0 56px rgba(255,159,10,.95), 0 4px 0 rgba(0,0,0,.4);
+  animation:pvCallPulse .6s ease-in-out infinite;
+}
+.pv-call-dots{display:inline-block; animation:pvCallDots 1.2s steps(1) infinite;}
+@keyframes pvCallFade{from{opacity:0;} to{opacity:1;}}
+@keyframes pvCallPulse{0%,100%{transform:scale(1);} 50%{transform:scale(1.06);}}
+@keyframes pvCallDots{0%,100%{opacity:1;} 50%{opacity:.25;}}
+@media(max-width:575.98px){ .pv-call-text{letter-spacing:2px;} }
+@media(prefers-reduced-motion:reduce){
+  .pv-call-banner, .pv-call-text, .pv-call-dots{animation:none;}
+}
 
 /* ---- status banners ---- */
 .status-banner{

@@ -77,6 +77,7 @@ function run(){
   let w = ctx.__writes[0];
   suite.check('+1 writes 22', w && w.value && w.value.currentPrice === 22, JSON.stringify(w));
   suite.check('  and claims the lead', w && w.value && w.value.leaderTeamId === 't1');
+  suite.check('  and cancels any "going once/twice" call', w && w.value && w.value.callState === null);
   ctx.__writes.length = 0;
   evalIn(ctx, 'placeMyBid(2)');
   w = ctx.__writes[0];

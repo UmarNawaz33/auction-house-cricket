@@ -217,7 +217,21 @@ function hueFor(text){
    `.collapse:not(.show)` hides the list and the toggler is visible; at lg and
    up the list is forced visible and the toggler hidden. Only the click needs
    wiring, so this uses seven lines of our own rather than pulling in
-   Bootstrap's ~80KB JS bundle (one less CDN that can fail). */
+   Bootstrap's ~80KB JS bundle (one less CDN that can fail).
+
+   toggleTabMenu is generic (reads `aria-controls` off the clicked button
+   rather than a hardcoded id) so the SAME handler also drives the
+   top-actions hamburger on all four pages' `<header>` — that one collapses
+   the header's right-hand button cluster (sign out, session info, sound
+   toggle, or index.html's login links) on phone widths, is styled in
+   theme.css (`.pv-actions-burger`, near `.pv-burger`), and is NOT a
+   Bootstrap navbar/.collapse element like this one — it targets
+   `#topActions` directly with no wrapper markup, since two pages (public,
+   team) have no `nav.navbar-expand-lg` element to hang Bootstrap's own
+   breakpoint CSS off of. Its button lives in each page's own HTML, not a
+   render function, since `#topActions`'s content is already rendered
+   per-page by `renderTopActions()` (team.js/moderator.js/admin.js) or is
+   static markup (index.html). */
 
 function renderTabNav(tabs, activeId, handlerName){
   const current = tabs.find(t => t.id === activeId);
@@ -236,7 +250,8 @@ function renderTabNav(tabs, activeId, handlerName){
 }
 
 function toggleTabMenu(btn){
-  const menu = document.getElementById('tabMenu');
+  const id = btn.getAttribute('aria-controls');
+  const menu = id && document.getElementById(id);
   if(!menu) return;
   const open = menu.classList.toggle('show');
   btn.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -266,6 +281,15 @@ function money(v){
      leader      the team object currently winning, or null
      leaderNote  appended inside the leading capsule (e.g. "You!")
      extra       html dropped in below the bid (e.g. the bid button)
+
+   The leading capsule carries hueFor(leader.name) unconditionally — the
+   SAME hashing the Teams tiles (teamTilesMarkup, below) use for their dot/
+   accent colour, so "Leading Lions" can be colour-matched to Lions' own
+   colour everywhere that team appears. theme.css keeps a fixed green as the
+   base/fallback look (moderator.js, team.js); public.js's own sheet is the
+   only one that currently overrides per hue — see CLAUDE.md §5a. Adding the
+   class here unconditionally is harmless on the other two pages: nothing
+   there reacts to it.
 */
 function lotMarkup(player, opts){
   const o = opts || {};
@@ -292,7 +316,7 @@ function lotMarkup(player, opts){
           <div class="pv-bid">${money(o.price)}</div>
         </div>
         ${o.leader
-          ? `<div class="pv-leader is-leading">
+          ? `<div class="pv-leader is-leading ${hueFor(o.leader.name)}">
                <span class="pv-leader-dot"></span>
                <div class="pv-leader-txt">
                  <div class="pv-leader-label">Leading${o.leaderNote ? ' &middot; '+o.leaderNote : ''}</div>
@@ -305,6 +329,64 @@ function lotMarkup(player, opts){
       </div>
       ${o.extra || ''}
     </div>
+  </div>`;
+}
+
+/**
+ * The "Teams" tile grid — one block per team, showing its purse remaining
+ * as a headline number plus a drain bar, colour-hashed via hueFor(t.name).
+ * Used by public.js's renderTeamsPanel() (wrapped in its own .pv-panel
+ * heading) AND team.js's own Teams card (wrapped in the native .card/<h2>
+ * team.html already uses elsewhere) — moved here from public.js once BOTH
+ * pages needed it, same reasoning as lotMarkup. Returns just the grid, not
+ * an empty-state message: callers with zero teams handle that themselves,
+ * since public.js and team.js word it slightly differently.
+ */
+function teamTilesMarkup(teamsArr){
+  return `
+  <div class="row g-3">
+    ${teamsArr.map(t=>{
+      const rem = remainingOf(t);
+      const pct = t.budget ? Math.max(0,Math.min(100,(rem/t.budget)*100)) : 0;
+      const hue = hueFor(t.name);
+      return `
+      <div class="col-12 col-sm-6 col-xl-4">
+        <div class="pv-team h-100 ${hue}">
+          <div class="pv-team-head">
+            <h3 class="pv-team-name"><span class="pv-dot ${hue}"></span>${t.name}</h3>
+            <span class="pv-team-squad">${squadCountOf(t)} player${squadCountOf(t)===1?'':'s'}</span>
+          </div>
+          <div class="pv-team-purse">${money(rem)}</div>
+          <div class="pv-team-of">left of ${fmtMoney(t.budget)}</div>
+          <div class="pv-bar"><div class="pv-bar-fill ${hue}" style="width:${pct}%;"></div></div>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+/**
+ * "Going once… going twice…" — the moderator's own dramatic call, ahead of
+ * SOLD. `auction.callState` ('once' | 'twice' | null) is the one field this
+ * reads; moderator.js's callOnce()/callTwice()/cancelCall() are the only
+ * writers, and every OTHER write to the `auction` node clears it back to
+ * null (a new bid, a pause, a new lot, ending the session — see CLAUDE.md
+ * §3's callState row for the exact list) so it can never linger past the
+ * moment it applies to.
+ *
+ * Shared by public.js (the big screen) and team.js (so a bidder actually
+ * feels the urgency) — NOT moderator.js, which gets a plain text readout
+ * next to its own call buttons instead of the theatrical banner; there is
+ * no dramatic moment to sell the person pressing the button. Returns ''
+ * when there's no active call, so callers can drop this straight into a
+ * template string unconditionally.
+ */
+function callBannerMarkup(auc){
+  if(!auc || (auc.callState !== 'once' && auc.callState !== 'twice')) return '';
+  const twice = auc.callState === 'twice';
+  return `
+  <div class="pv-call-banner${twice ? ' twice' : ''}" role="status" aria-live="assertive">
+    <div class="pv-call-text">Going ${twice ? 'Twice' : 'Once'}<span class="pv-call-dots" aria-hidden="true">&hellip;</span></div>
   </div>`;
 }
 

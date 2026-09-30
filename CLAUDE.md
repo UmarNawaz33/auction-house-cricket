@@ -125,6 +125,36 @@ back on the default app and undo this. Guarded by `auth.test.js`, which
 asserts both halves: that shared.js honours the attribute, and that
 admin.html actually carries it.
 
+**Two independent hamburgers, all four pages (added 2026-10-01):** every
+page's `<header>` can carry up to two collapsible-on-mobile pieces, and
+they are NOT the same mechanism:
+- **The top-actions burger** (`.pv-actions-burger`, theme.css) — static
+  markup in each page's own HTML, right after `.brand` in `.top-row`,
+  `onclick="toggleTabMenu(this)"`, `aria-controls="topActions"`. Collapses
+  `#topActions` (sign out + session info on team/moderator/admin, the
+  sound toggle + login links on index.html) behind a hamburger at
+  `max-width:575.98px`. Present on **all four** pages. Deliberately its
+  OWN class, not `.pv-burger` — it does not share that class's chrome
+  (see §6a for why: sharing it made the button invisible). Fully
+  self-contained CSS (own media query, own `.show` toggle) — no Bootstrap
+  `.navbar`/`.navbar-expand-lg`/`.collapse`, since index.html/team.html
+  have no navbar element to hang that off of.
+- **The tabs burger** (`.pv-burger`, via `renderTabNav()`/shared.js) —
+  unchanged, pre-existing, moderator.html + admin.html only. Collapses the
+  Floor/Players/etc. tab list, DOES depend on Bootstrap's own
+  `.navbar-expand-lg`/`.collapse` CSS, and is hidden entirely
+  (`.pv-no-bs .pv-burger{display:none}`) with its own inline fallback
+  layout if that CDN fails — see §6a.
+
+Both are driven by the SAME `toggleTabMenu(btn)` (shared.js): it reads
+`aria-controls` off whichever button was clicked and toggles `.show` on
+that id, rather than a hardcoded `'tabMenu'` — this is what let the second
+hamburger reuse the handler with zero JS changes beyond that
+generalization. On moderator.html/admin.html both hamburgers can be on
+screen at once (top-actions burger in `.top-row`, tabs burger in
+`nav.tabs` below it) — intentional, they collapse two unrelated header
+regions.
+
 ## 3. The `auction` node — the one shared mutable state everything branches on
 
 Single Firebase Realtime Database node at `auction`, read by every page,
@@ -147,7 +177,27 @@ every reader silently breaks a page that still works from `undefined`.
 | `lastResult` | object \| null | `{name, result, team, price, image}` shown in the "between lots" banner |
 | `completed` | boolean | moderator ended the session; pages fall back to a home/summary view |
 | `completedAt` | number \| null | timestamp |
+| `callState` | `'once'\|'twice'\|null` | the moderator's "going once / going twice" call (added 2026-10-01) — see its own paragraph below |
 | `updatedAt` | number | last-write timestamp (not otherwise read) |
+
+**`callState`, unlike every other field above, has exactly THREE writers**
+(`callOnce()`/`callTwice()`/`cancelCall()`, moderator.js) **and is cleared to
+`null` by every OTHER write this node gets**, everywhere else in the
+codebase — the field only ever means anything for the single moment between
+one of those three calls and whatever happens next, so nothing may let it
+survive past that moment by accident. The exhaustive list of clearers:
+moderator.js's `pauseSession()`, `completeBidding()`, `reopenAuction()`,
+`holdForNext()` (covers `markSold`/`markUnsold`/`skipPlayer`, all three),
+`resetBid()`, and `armDisconnectPause()`'s `onDisconnect()` payload; team.js's
+`placeMyBid()` (a fresh bid voids whatever was being called); `nextPlayer()`
+needs no explicit clear since it uses `.set()`, which replaces the whole
+node. **Any new code path that writes to `auction` and is not one of the
+three callers above must clear `callState` too**, or a stale "going once"
+banner can outlive the moment it applied to — `flow.test.js` asserts this
+field on every scenario above for exactly this reason. Rendered via
+`callBannerMarkup()` (shared.js, §4) on public.js and team.js — not
+moderator.js, which gets a plain text readout next to its own call buttons
+instead (there's no room to sell the person who's pressing the button).
 
 Read/derive this shape only through `shared.js`'s predicates
 (`isPaused`, `isAwaitingNext`, `isCompleted`, `biddingIsOpen`,
@@ -173,11 +223,14 @@ be sanity-checked against every caller before it ships:
 | shared.js symbol | used by |
 |---|---|
 | `getSession`, `saveSession`, `clearSession`, `signOutAll`, `claimKey`, `adminLogin`, `ensureAnonymousAuth` | session/auth — moderator, team, admin (admin also self-checks via Firebase auth state) |
-| `lotMarkup` | **public.js, moderator.js, team.js** — the player-on-the-block panel. One template, three callers; changing its signature means checking all three call sites, not just one. |
+| `lotMarkup` | **public.js, moderator.js, team.js** — the player-on-the-block panel. One template, three callers; changing its signature means checking all three call sites, not just one. The leading capsule carries `hueFor(leader.name)` unconditionally (added 2026-10-02) — public.js's own sheet is the only one that currently reacts to it (§5a); harmless on moderator.js/team.js, which keep theme.css's fixed green. (A `priceId` option existed briefly for a ticking-price-counter feature; that feature was removed by request the same day — `lotMarkup` has no such option any more.) |
+| `callBannerMarkup` | public.js, team.js — the "going once / going twice" full-screen call (§3's `callState`). NOT moderator.js, which shows a plain text readout next to its own call buttons instead — see §3. Pure string builder: `''` when there's no active call, so callers can drop it straight into a template unconditionally without an `if`. |
+| `teamTilesMarkup` | public.js's `renderTeamsPanel()` only (added 2026-10-02, §5a). NOT team.js — it tried this (the full all-teams grid), then a single hand-built `.pv-team`-styled tile, then settled on a plain `.chip` built inline instead (see §5a item 7); none of those team.js revisions call this function today. The empty-teams case is left to the caller (public.js's `.pv-empty`); this function only ever returns the grid. |
 | `escapeHtml` | public.js's sold takeover. **Use it for text between tags; `escapeAttr` only escapes `"` and is for attribute values.** Names in the takeover come from `recentSales` (moderator/admin-written), but they're escaped anyway. |
 | `hueFor`, `money`, `splitMoney` | public.js (category/team color hashing, headline bid typography) |
 | `playerImg`, `playerImageSrc` | moderator.js, team.js, admin.js (public.js uses `playerImageSrc` directly inside `lotMarkup`/its own table) |
-| `renderTabNav`, `toggleTabMenu` | moderator.js, admin.js (the collapsible hamburger nav) |
+| `renderTabNav` | moderator.js, admin.js (the collapsible TABS hamburger nav) |
+| `toggleTabMenu` | `renderTabNav`'s own toggler (moderator.js, admin.js) **and** the static top-actions-burger markup on all four pages' `<header>` — generalized to read `aria-controls` off the clicked button rather than a hardcoded id, specifically so both hamburgers (see §2) could share one handler. Not page-specific. |
 | `renderSalesTable` | moderator.js, admin.js. **Not public.js** — despite living right next to `saleRecord`/`salesArray` (which public.js does use), public.js has its own independent results-table markup (two `.pv-pill` spots) rather than calling this. A wording/column change here does not reach `index.html`; check both places. |
 | `saleRecord`, `salesArray` | moderator.js, admin.js, public.js |
 | `soldLabel` | `renderSalesTable` (shared.js itself); moderator.js's Players tab, Summary tab, `editPlayerPrompt`, `confirmDeletePlayer`; admin.js's Players tab. Reads `sale.via` (`'assigned'` → `'retained'`, anything else → `'sold'`) — **not** `player.status`, which is `'sold'` for both a real auction sale and a moderator Assign and can't tell them apart on its own. Lowercase; a caller re-cases it if it needs Title Case. **public.js does NOT call this** — its own two results-table spots (see `renderSalesTable` row above) inline the identical `via==='assigned'` check themselves, capitalized, because it never calls the shared table renderer. Touch both if the wording changes again. |
@@ -198,9 +251,16 @@ design**:
 - **`css/theme.css`** (linked, applies to all four pages) owns the *shared
   lot component*: `.pv-lot`, `.pv-lot-grid`, `.pv-name`, `.pv-eyebrow`,
   `.pv-meta`, `.pv-tag`, `.pv-bid*`, `.pv-leader*`, `.pv-photo*`,
-  `.pv-toast`, `.pv-burger*`. If you change how the player-on-the-block
-  looks, this is almost always the file to edit — a change here reaches
-  public.js, moderator.js, and team.js at once.
+  `.pv-toast`, `.pv-burger*`, `.pv-actions-burger`, and (added 2026-10-01)
+  `.pv-call-banner*` — the "going once/going twice" call (§3's `callState`,
+  §4's `callBannerMarkup`), shared by public.js AND team.js, which is why
+  it lives here rather than in either page's own injected sheet. Also
+  (added 2026-10-02) `.pv-team*`/`.pv-dot*`/`.pv-bar*` — the Teams tile
+  grid (`teamTilesMarkup()`, §4), moved here from public.js's own sheet
+  once team.js needed the identical tiles too (team.html's own "Teams"
+  card — §5a). If you change how the player-on-the-block looks, this is
+  almost always the file to edit — a change here reaches public.js,
+  moderator.js, and team.js at once.
 - **`js/public.js`'s `pvCss()`** (injected into `<head>` at runtime, public
   page only) owns sections that only exist on the public page: the home
   screen (`.pv-hero*`), the results table (`.pv-table`, `.pv-pill`,
@@ -291,6 +351,126 @@ extract matches from both, diff them — see git history around
 `public-js-glass-redesign.md` (memory) for the one-liner used to build the
 table above, and the Bootstrap-collision audit script (§6).
 
+## 5a. The five "showtime" features (2026-10-01)
+
+A second batch of exciting-feature requests, distinct from the four
+**audience features** in §5 above — those were public.js-only; these span
+multiple pages and one (`auction.callState`, §3) adds a new database field.
+No suite in `tests/` renders real CSS (§7), so anything below described as a
+visual/animation effect was verified in a real (non-stub) headless Chrome,
+not just by `node tests/run.js` passing — see each feature's own "why" for
+the specific real-browser gotcha it ran into.
+
+Originally shipped as five features on 2026-10-01; a **ticking price
+counter** (the headline bid number counting up via `requestAnimationFrame`
+instead of snapping) was built that day and then **removed by request the
+next day** — `tickPriceTo()`/`syncPriceTicker()`/`resetPriceTicker()`,
+`lotMarkup()`'s `priceId` option, and `.pv-bid.is-ticking` no longer exist.
+Don't reintroduce any of it from an old diff or memory without being asked.
+Two more requests landed the same day it was removed — **the stage wash
+made broader** and **the leader capsule colour-matched to the leading
+team**, both folded into their existing numbered items below — plus one
+new, sixth item: **the Teams tile grid moved to shared.js/theme.css so
+team.html could get the identical tiles too**.
+
+1. **"Going once… going twice…" banner** — `auction.callState` (§3) is the
+   whole mechanism: `callOnce()`/`callTwice()`/`cancelCall()` (moderator.js)
+   are its only writers; `callBannerMarkup()` (shared.js, §4) renders it on
+   public.js AND team.js (not moderator.js — see §3); every OTHER write to
+   `auction` clears it back to `null` (§3's exhaustive list). No local timer
+   or DOM lifecycle of its own — purely reactive to Firebase state, so it
+   appears/disappears in lockstep with the moderator's buttons on every
+   page watching. moderator.js's own floor tab shows a plain text readout
+   ("Calling: GOING ONCE…") next to the Going Once/Going Twice/Cancel Call
+   buttons instead of the big banner.
+2. **Leader-color stage wash** (public.js only) — `#pvStageWash`, a
+   full-viewport `position:fixed; z-index:-1` tint behind the entire page,
+   coloured to whichever team is CURRENTLY LEADING the lot
+   (`hueFor(leader.name)`, the exact same hashing their team tile/dot
+   already uses). Injected once (`injectStageWash()`, alongside
+   `injectReactionBar()` at the top of the file) and from then on only ever
+   has classes toggled on it (`updateStageWash()`, called from the top of
+   `renderPublic()`) — never destroyed/recreated, so it survives every
+   `#tabContent` re-render untouched, same pattern as the reaction bar. No
+   leader (base price active, nobody's bid) means no wash. `z-index:-1` is
+   deliberate, not a placeholder: it puts the wash BEHIND theme.css's
+   header (`z-index:50`) and this page's own non-positioned `<main>`
+   content, per CSS's stacking order (negative z-index paints before
+   ordinary static content) — it only shows through the gaps around and
+   between panels and faintly through their semi-opaque backgrounds, as
+   mood lighting rather than a hard colour block. Its CSS lives in
+   public.js's own `pvCss()`, not theme.css, since only this page uses it.
+   **Resized 2026-10-02, three times so far.** First tried as TWO large
+   radial gradients (top-anchored + bottom-anchored) with opacity raised
+   (`.5→.6`, `.8→.9`) — a follow-up request then asked for the ORIGINAL
+   single-gradient version back ("was good"), just bigger, so it went to
+   ONE gradient at `180% 150%` (was `65% 55%`) with a softer, further-out
+   falloff (`transparent` at `88%`, was `70%`) and the original `.5`/`.8`
+   opacity levels restored. A further follow-up then asked for the area
+   dialed back down 30%: since an ellipse's area scales with the PRODUCT of
+   its two dimensions, shrinking both by the same linear factor of
+   `sqrt(0.7)≈0.837` shrinks the area by 30% — currently `150% 125%`
+   (falloff and opacity unchanged from the round before). **If asked to
+   resize this again, keep it ONE gradient and scale both numbers by the
+   same factor — don't reintroduce the two-gradient version.**
+3. **Leader capsule colour-matched to the leading team** (public.js only,
+   added 2026-10-02) — `lotMarkup()` (shared.js, §4) now adds
+   `hueFor(leader.name)` to the leading capsule unconditionally; theme.css
+   keeps the original fixed green as the base look (moderator.js, team.js
+   both still show plain green), and public.js's own sheet is the only one
+   with per-hue overrides (background tint + dot + name + label, all six
+   hues) — so "Leading Lions" reads in Lions' own colour here specifically,
+   matching that same team's dot/tile colour in the Teams panel below it.
+   `hue-green` needs no override of its own; it's already theme.css's
+   default.
+4. **Theatrical player reveal** — a CSS-only upgrade of the EXISTING
+   `.pv-lot.is-revealing` one-shot animation (public.js's `pvCss()`); the
+   JS that adds/removes the class (`__justRevealed`,
+   `handleAuctionTransition()`) is unchanged. Now: a brief gold flash-ring
+   around the whole panel, the photo brightens through its blur rather than
+   just fading, and a diagonal light sweep crosses the photo once (a
+   `::after` pseudo-element — no extra markup) — like a spotlight finding
+   the player, not just an opacity fade. The name/meta/bid text stagger is
+   unchanged.
+5. **Record sale gets bigger than a normal sale** — `isNewRecord()`'s
+   result (already computed in `maybeCelebrateNewSale()` for the takeover's
+   `.is-record` treatment) now ALSO threads into
+   `celebrateSaleFirework(isRecord)`, which fires more bursts with more
+   particles each when true, and into a new `screenShakeForRecord()`
+   (adds/removes `.pv-shake` on `<body>` briefly) — called only when
+   `isRecord` is true, right alongside the takeover and the bigger
+   fireworks. Not part of the temporary fireworks feature (§7a) and not
+   removed alongside it if that's ever switched off — it's the other half
+   of this feature, independent of `TEMP_FIREWORKS_ENABLED`. Respects
+   `prefers-reduced-motion`; guards a missing `document.body.classList`
+   (the test stub's `<body>` doesn't have one — see §6a).
+6. **`teamTilesMarkup()`** (shared.js, §4, added 2026-10-02) — the
+   purse-budget tile grid public index.html has always shown (one block per
+   team: name + colour dot + purse remaining + drain bar); its CSS
+   (`.pv-team*`/`.pv-dot*`/`.pv-bar*`) moved out of public.js's own sheet
+   into theme.css the same day team.html briefly needed the same look (see
+   below). While relocating this CSS, its hue glow colours were also
+   corrected to match `--pv-blue`/`--pv-purple`/`--pv-orange`/`--pv-pink`/
+   `--pv-teal` exactly — the original had drifted to an older palette's
+   accent colours (e.g. `rgba(10,132,255,…)` for "blue" instead of this
+   theme's `#3B82F6`). Used ONLY by public.js's `renderTeamsPanel()` —
+   team.js tried it, then a `.pv-team`-styled single tile, then dropped
+   both; see the next item for where team.html landed.
+7. **team.html's own-team display — three revisions, same week, before it
+   settled.** What to show the signed-in team about ITSELF went through
+   three shapes: (a) `teamTilesMarkup()`'s full ALL-teams grid, wrapped in
+   its own `.card`/`<h2>Teams <span class="n">…</span></h2>` — too much,
+   removed by request; (b) a single `.pv-team`/`.pv-dot`-styled identity
+   tile for just that one team — also replaced; (c) **current**: a plain
+   `.chip` — `<div class="chip"><div class="val">{team.name}</div><div
+   class="lbl">My Team</div></div>` — built inline in `renderDashboard()`
+   as the FIRST item in the SAME `.chip-row` as Purse Remaining/Squad Size,
+   "in the same manner" as those two (theme.css's existing `.chip`, no
+   colour-coding, no new CSS at all). If asked to change how team.html
+   shows the team's own name again, this `.chip-row` entry is the current
+   answer — don't reintroduce (a) or (b) from an old diff without being
+   asked.
+
 ## 6. Known collisions — check before naming a new class
 
 Three real bugs shipped from name collisions with Bootstrap, now fixed and
@@ -327,6 +507,10 @@ as the ones above — easy to reintroduce without realizing it.
 | fireworks/takeover stayed silent when the SAME player was released and re-sold | Sales are keyed by player id (`recentSales/<playerId>`, see the first row), so a re-sale OVERWRITES the player's one row rather than adding another. The gate in `maybeCelebrateNewSale()` decided "is this a new sale" by comparing the newest row's **id** alone, and an overwritten row has the same id, so the re-sale looked unchanged and nothing fired. | The gate compares `saleKey()` = `id + ':' + time`. `saleRecord()` stamps a fresh `time: Date.now()` on every write, so id + time identifies one specific sale *event*. `fireworks.test.js` builds each fixture sale with a FIXED time per id (a real re-render returns the stored row byte-for-byte); it previously used a fresh `Date.now()` per call, which made "same sale" differ by a millisecond ~1 run in 9 once the gate looked at time. **Any new code that decides whether a sale is "new" must key on id + time, not id.** |
 | `nav.tabs button` never reset the generic `button{}` rule's `box-shadow`/`backdrop-filter`, or `button:hover`'s `transform` | Same shape of bug as the ones above, in the same file: `nav.tabs button{}` was written as a flat, transparent pill (`background:transparent; border:none`) but never touched those three properties, so they fell through from the less-specific generic `button` rule anyway — CSS only overrides a property a more-specific rule actually *declares*. Every nav tab carried an always-on inset ring plus its own 12px blur stacked on the header's own much stronger one, and lifted 1px on hover — looked exactly like a stray highlight/glow bleeding onto the page content just below the header. | `nav.tabs button` now explicitly sets `box-shadow:none` and `backdrop-filter:none`; `nav.tabs button:hover` sets `transform:none`. `.pv-burger` (the hamburger) had the same `backdrop-filter` leak, fixed the same way. **Whenever a rule is written to override a generic element style down to "flat/plain," explicitly zero out every property the generic rule sets — a property that's simply never mentioned still applies.** |
 | `const REACTION_EMOJI` declared AFTER the top-level call that reads it — **this shipped, then was caught by real-browser testing, not `node tests/run.js`** | The SAME temporal-dead-zone trap §7a already documents for the fireworks `let`s, hit for real this time. `injectReactionBar()` is called at module load (near the top of public.js, alongside `injectLook()`) and reads `REACTION_EMOJI`; a `const` isn't given a value until ITS OWN declaration line runs, unlike a function declaration (fully hoisted). With the declaration left down in the "Spectator reactions" section next to the functions that use it, loading the real page threw `Cannot access 'REACTION_EMOJI' before initialization` immediately — an uncaught top-level throw that aborted the **entire script**, so nothing after that line ever ran: no Firebase listeners, no rendering, a blank public page. **`node tests/run.js` did not catch this — all 445 checks passed anyway.** Root cause: the default dom-stub's `getElementById()` always returns a truthy stub object for any id (see its own doc comment), so `injectReactionBar()`'s own `if(document.getElementById('pvReactionBar')) return;` guard silently short-circuited on the very first call in every test, before ever reaching `REACTION_EMOJI` — the throw only existed on a real page load in a real browser, where `getElementById` correctly returns `null` for an element that doesn't exist yet. | `REACTION_EMOJI`'s declaration moved above the `injectReactionBar()` call, with a comment on both ends warning not to move it back without re-testing in an actual browser. Guarded by a regression test in `audience-features.test.js` that checks SOURCE ORDER directly (declaration index < call index) rather than trying to out-clever the dom-stub gap that hid it — a test relying on the stub's `getElementById` behaving realistically would need the stub fixed first, which carries its own regression risk across every other test that currently depends on its current (unrealistic) always-truthy behavior; not attempted here, left as a known harness limitation. **The general lesson, not just for this one variable: `node tests/run.js` passing is not proof that a page loads. Anything invoked at a file's top level (not inside a function called later) needs an actual browser check — this project's own dom-stub can and does mask a real top-level throw.** |
+| the new top-actions hamburger (§2, added 2026-10-01) was invisible at every width the moment it shipped | Its first draft shared the `.pv-burger` class for the look. `.pv-no-bs .pv-burger{display:none}` (the Bootstrap-CDN-down fallback for the pre-existing TABS burger, which genuinely can't work without Bootstrap's `.collapse` CSS) has specificity `(0,2,0)`; the new burger's own `display:inline-flex` rule, base or inside its `@media` block, is only `(0,1,0)` either way — lower specificity always loses regardless of media-query scoping or source order. So on any page where the Bootstrap CDN happened to be unreachable the burger would vanish and there would be NO way to reach `#topActions` on a phone. Caught only by a real (non-headless-stub) Chrome screenshot at phone width — `node tests/run.js` has no suite that renders real CSS. | `.pv-actions-burger` is its own class, duplicating the handful of `.pv-burger` chrome properties it needs rather than sharing the class, specifically so it can never match `.pv-no-bs .pv-burger`. **Whenever a new element reuses an existing class purely for its visual look, check every OTHER selector that already targets that class — a fallback/edge-case rule elsewhere can apply to it too, invisibly.** |
+| `#pvReactionBar`'s buttons weren't laying out where the CSS seemed to say | `display:flex; gap:8px` was declared on `#pvReactionBar` itself, but `reactionBarMarkup()` nests the actual `<button>`s one level deeper, inside an inner `.pv-reactions` wrapper div that had no layout CSS of its own — a flex container only arranges its OWN direct children, so `.pv-reactions`'s children (the buttons) fell back to plain block flow and stacked one per line regardless of what `#pvReactionBar` declared. Caught while screenshot-verifying the unrelated top-actions-hamburger change above, same session; `node tests/run.js` never would (no suite renders real CSS). | The layout rule now lives on `.pv-reactions` (theme is column/stacked, by request — `.pv-reactions{display:flex; flex-direction:column; gap:8px;}`); `#pvReactionBar` keeps only the pill's own chrome (position/padding/background/blur). **When a flex/grid container's `display` rule doesn't seem to be taking effect on its apparent children, check whether there's an unstyled wrapper div in between** — a template string's nesting is easy to misjudge without rendering it. |
+| `injectStageWash()`'s first draft used `body.insertBefore(el, body.firstChild)` to put the wash element first in the DOM | Not a shipped bug (caught before it ever ran for real), but the SAME dom-stub gap that hid the `REACTION_EMOJI` TDZ crash two rows up: `document.getElementById()` always returns a truthy stub, so `injectStageWash()`'s own "already exists, skip" guard short-circuited on its very first call in every test, and `node tests/run.js` passed without ever exercising the `insertBefore` line — which would have thrown for real, since the test stub's `document.body` only implements `appendChild()`. | Switched to `appendChild()`, matching every other injected element in public.js (the reaction bar/layer) — one pattern to remember, not two. DOM order doesn't even matter here: `z-index:-1` already puts the wash behind the page's normal content regardless of where in `<body>` it sits. **Whenever code reaches for a DOM method beyond `getElementById`/`createElement`/`appendChild`/`querySelector`, check `tests/lib/dom-stub.js` actually implements it — the "already exists" guard pattern this codebase uses everywhere can hide an untested branch entirely, same as it did for `REACTION_EMOJI`.** |
+| `screenShakeForRecord()` crashed on its very first real exercise, in `node tests/run.js` | `document.body.classList.add(...)` — the test stub's `<body>` is `{ appendChild(){} }`, no `classList` at all (real browsers always have one). This IS a stub-fidelity gap, not a real-browser bug, but it would have crashed `node tests/run.js` the moment any test exercised a genuine record sale end-to-end, rather than through a stub. | `screenShakeForRecord()` guards `!document.body \|\| !document.body.classList` before touching it, same defensive style as `typeof Audio === 'undefined'` elsewhere in this file. `showtime-features.test.js` exercises the real function (not a stub replacement) specifically to prove this guard holds. |
 
 ## 7. Test suite — which one to run
 
@@ -336,7 +520,7 @@ the DOM, load the real `js/*.js` files unmodified into a VM context, and
 assert on what gets rendered or written.
 
 ```
-node tests/run.js                    # everything (438 checks, well under 1s)
+node tests/run.js                    # everything (484 checks, well under 1s)
 node tests/run.js render markup      # only the named suites
 node tests/run.js --list             # see suite names
 ```
@@ -345,8 +529,8 @@ node tests/run.js --list             # see suite names
 |---|---|---|---|
 | `render` | render.test.js | every tab/state on all 4 pages renders without throwing or leaking `undefined`/`NaN`/`[object Object]` | any render function's template string, on any page — the cheap first check |
 | `markup` | markup.test.js | the same states produce tag-balanced HTML (no unclosed `<div>`) | same as above, when the edit reshuffles nested tags rather than just text |
-| `flow` | flow.test.js | `js/moderator.js`'s action functions write the *correct* Firebase payload (sold/unsold/skip/next/pause/resume/complete/reopen/disconnect); that `recentSales` stays one row per player through release/return/delete and a resale overwrites rather than duplicates; the retain/assign feature (`assignPlayerPrompt`/`confirmAssignPlayer`), **including that it writes `via:'assigned'`** (the one fact `soldLabel()`/the fireworks gate/the takeover gate all branch on); and that the SOLD hammer sound fires on a real sale but **not** on unsold or assign (`ctx.__audio`, via the `Audio` stub in `tests/lib/dom-stub.js`) | `markSold`, `markUnsold`, `skipPlayer`, `nextPlayer`, `pauseSession`, `pauseBidding`, `resumeSession`, `resetBid`, `completeBidding`, `reopenAuction`, `attachListeners`, `doRelease`, `returnToPool`, `deletePlayer`, `assignPlayerPrompt`/`confirmAssignPlayer` — or anything else that touches `recentSales` |
-| `bidsteps` | bidsteps.test.js | the team owner's +1/+2 buttons: pricing (`bidPriceFor`), per-button affordability, and what `placeMyBid` writes | `shared.js`'s `bidPriceFor`/`teamCanAffordBid`, or `team.js`'s bid buttons/`placeMyBid` |
+| `flow` | flow.test.js | `js/moderator.js`'s action functions write the *correct* Firebase payload (sold/unsold/skip/next/pause/resume/complete/reopen/disconnect); that `recentSales` stays one row per player through release/return/delete and a resale overwrites rather than duplicates; the retain/assign feature (`assignPlayerPrompt`/`confirmAssignPlayer`), **including that it writes `via:'assigned'`** (the one fact `soldLabel()`/the fireworks gate/the takeover gate all branch on); that the SOLD hammer sound fires on a real sale but **not** on unsold or assign (`ctx.__audio`, via the `Audio` stub in `tests/lib/dom-stub.js`); `callOnce()`/`callTwice()`/`cancelCall()` (refusing to call with no bid yet, too); and that **every one of the scenarios above also clears `auction.callState` back to `null`** (§3) | `markSold`, `markUnsold`, `skipPlayer`, `nextPlayer`, `pauseSession`, `pauseBidding`, `resumeSession`, `resetBid`, `completeBidding`, `reopenAuction`, `attachListeners`, `doRelease`, `returnToPool`, `deletePlayer`, `assignPlayerPrompt`/`confirmAssignPlayer`, `callOnce`/`callTwice`/`cancelCall` — or anything else that touches `recentSales` or `auction` |
+| `bidsteps` | bidsteps.test.js | the team owner's +1/+2 buttons: pricing (`bidPriceFor`), per-button affordability, what `placeMyBid` writes, and that it clears `auction.callState` (§3) | `shared.js`'s `bidPriceFor`/`teamCanAffordBid`, or `team.js`'s bid buttons/`placeMyBid` |
 | `endgame` | endgame.test.js | the real end-of-auction journey: last player sold → moderator's "All Players Auctioned" panel → Complete Bidding → public home screen → results-on-request | moderator's all-done panel or `completeBidding()`; public's `renderHomeScreen()`/`togglePastResults()` |
 | `admin-isolation` | admin-isolation.test.js | admin sign-out writes nothing and never pauses the auction; admin UI still works while paused+completed; moderator-only functions don't leak into admin.js; **a credential lost underneath an open admin tab (null or anonymous) clears the session, says so, and falls back to the login screen — and a rejected key write reports the remedy instead of silently doing nothing** | `admin.js` sign-out/session handling or its `onAuthStateChanged`, the `accessKeys` write paths, or before assuming a moderator helper is moderator-only |
 | `retained-label` | retained-label.test.js | `soldLabel()` itself (assigned/auction/legacy-no-`via`/no-sale-found, always lowercase); `renderSalesTable()`'s badge text AND that its CSS class stays `sold` (green) for a retained row — only the word changes; moderator.js's Players tab, Summary tab, `editPlayerPrompt`'s status hint and `confirmDeletePlayer`'s title+body, each checked for BOTH a retained and a real-sale player so neither wording regresses into the other; admin.js's Players tab; and public.js's own independently-implemented results table (it doesn't call `renderSalesTable` — see §4) | `soldLabel`/`renderSalesTable` (shared.js), moderator.js's Players/Summary tabs or its edit/delete-player modals, admin.js's Players tab, or public.js's own results-table markup |
@@ -355,6 +539,7 @@ node tests/run.js --list             # see suite names
 | `takeover` | takeover.test.js | `soldTakeoverMarkup` content (incl. the circular 5→0 timer, its ring duration and reduced-motion step count both derived from `TAKEOVER_SECONDS`, `aria-hidden`), HTML-escaping of player/team names, and graceful degradation on missing fields; the real tick chain — digit reads 4,3,2,1,0 at one second apiece (5s total), then a 300ms fade and removal; Escape / tap closes early and a stale pending tick then does nothing; a second sale replaces rather than stacks; and that it is wired to the fireworks gate exactly (not on first load, repeat render, unsold or assign; **does** show again for a released-and-re-sold player, with the new team and price); and that it never references `TEMP_FIREWORKS_ENABLED` | public.js's takeover (`soldTakeoverMarkup`/`showSoldTakeover`/`tickSoldTakeover`/`dismissSoldTakeover`) or `maybeCelebrateNewSale` |
 | `public-sound` | public-sound.test.js | `enablePublicSound()`: success unlocks + updates `#soundToggle` + confirms with a toast; a genuinely rejected `play()` leaves `publicSoundEnabled` false and the button retry-able, with an error toast; missing `Audio` doesn't throw. `playPublicSoldSound()`: silent before enabling (even for a real new sale), wired to the same gate as the takeover/fireworks once enabled (first load, repeat, unsold, assign, re-sale — same matrix as `takeover`), and reuses one `<audio>` element rather than rebuilding it. Plus: `index.html` has `#soundToggle` wired to `enablePublicSound()`, and the other three pages don't | public.js's `enablePublicSound`/`playPublicSoldSound`/`updateSoundToggle`, `index.html`'s `#soundToggle`, or `maybeCelebrateNewSale` |
 | `audience-features` | audience-features.test.js | The audience features (§5), all public.js-only: **record banner** — `seedRecordFromHistory`/`isNewRecord`/`updateRecord` (never a tie, never the first-ever sale, `via:'assigned'` never counts) and `soldTakeoverMarkup(sale,{isRecord})`'s content, end-to-end through the real `maybeCelebrateNewSale` gate; **bidding war** — `handleAuctionTransition()` registers a pulse only on a GENUINE bid (not an unrelated `auction` write), stale pulses outside `BIDDING_WAR_WINDOW_MS` are pruned, `registerBid()`/`isBiddingWarActive()`'s timing, and the tag's presence in `renderLiveLot()`; **reveal animation** — `__justRevealed` set for a new player and NOT for a bid on the same one, consumed (reset) after exactly one render via the real registered `db.ref('auction').on('value')` listener (`ref()._trigger()`, dom-stub.js); **reactions** — zero Firebase writes ever, the bar injected once and not duplicated, `sendReaction()`'s particle creation/spread/self-removal, `clearReactions()`, and **a regression test for a real bug**: `REACTION_EMOJI` must be declared before the top-level `injectReactionBar()` call that reads it (§6a); **page layout** — Teams renders before Live Results on the live page (moved by request; the completed/home screen's order was deliberately left alone) | any of the audience features above, `renderPublic()`'s live-branch section order, or `handleAuctionTransition`/`registerBid`/`isBiddingWarActive` specifically since several features share it |
+| `showtime-features` | showtime-features.test.js | The §5a features, spanning shared.js/moderator.js/team.js/public.js: `callBannerMarkup()`'s output for 'once'/'twice'/null/unrecognised, and that it's wired into BOTH public.js's live lot and team.js's dashboard (Firebase-write coverage for `callOnce`/`callTwice`/`cancelCall`/clearing lives in `flow`/`bidsteps` instead, next to every other `auction` write); that `injectStageWash()`/`updateStageWash()` never throw across every auction shape (their actual CSS class output isn't assertable here — the test stub's `classList` is a no-op, see §6a — real-browser verification is what actually proved it); `isNewRecord()`'s result threading into `celebrateSaleFirework(isRecord)`'s stubbed call and into `screenShakeForRecord()` never throwing; that `.pv-lot.is-revealing` still appears/doesn't-replay (the CSS-only reveal upgrade didn't touch this JS); that `lotMarkup()`'s leading capsule and `teamTilesMarkup()` tag the SAME team with the SAME `hueFor()` class, and that public.js's `renderTeamsPanel()` calls `teamTilesMarkup()`; and that team.js's dashboard shows the signed-in team's OWN name as a plain `.chip` (not a coloured tile), first in the `.chip-row` ahead of Purse Remaining/Squad Size, with no other team rendered anywhere (the all-teams grid and the single colour-tile revision are both gone) | any of the §5a features, `callBannerMarkup`, `teamTilesMarkup`, `lotMarkup`'s leader hue class, `auction.callState` generally, or team.js's own-team chip |
 
 **What these tests do NOT catch** — they run in a headless `vm` context with
 a fake DOM, not a real browser: no actual CSS is applied, so a visual/layout
@@ -365,6 +550,22 @@ CSS-only or visual change, the check is a real screenshot (Chrome headless,
 narrower than ~500px, so phone widths need a fixed-width iframe wrapper),
 not this test suite. Don't report "tests pass" as evidence a visual change
 looks right.
+
+**Verifying any `requestAnimationFrame`-driven animation in real headless
+Chrome, if one is ever added again** (none currently exist in this codebase
+— a ticking price counter that used one was built 2026-10-01 and removed by
+request the next day): `--dump-dom`/`--screenshot` capture at the page's
+`load` event and do NOT wait for anything async after that — a `setTimeout`
+chain, real or nothing happens. `--virtual-time-budget` makes them wait by
+advancing a virtual clock that reliably fires `setTimeout` chains, but did
+NOT reliably fire `requestAnimationFrame` callbacks at the specific
+virtual-time instants tried while that feature existed (a multi-stage
+scenario using nested `setTimeout`s captured a stale, already-superseded
+value instead of the live tween). A short, real (no virtual-time-budget)
+page-internal `requestAnimationFrame` chain — literally
+`requestAnimationFrame(()=>requestAnimationFrame(()=>{ /* capture here */
+}))`, paired with a SMALL `--virtual-time-budget` just to let that chain
+run — reliably captured one genuine in-flight animation frame instead.
 
 **Fast-path policy:**
 - Touching one page's render function only → run that page's suites

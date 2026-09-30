@@ -59,6 +59,7 @@ async function run(){
     check('bidding closed in between', auc.biddingOpen === false);
     check('no player on the block', auc.currentPlayerId === null);
     check('last result shown', auc.lastResult && auc.lastResult.result === 'sold' && auc.lastResult.team === 'Lions');
+    check('any "going once/twice" call is cleared', auc.callState === null);
   });
 
   await scenario(suite, 'UNSOLD', 'await markUnsold();', (w, ctx, check) => {
@@ -70,6 +71,7 @@ async function run(){
     check('no hammer sound — nothing was sold', ctx.__audio.length === 0);
     const auc = (find(w, 'update', 'auction') || {}).value || {};
     check('holds for Next Player', auc.awaitingNext === true);
+    check('any "going once/twice" call is cleared', auc.callState === null);
   });
 
   await scenario(suite, 'SKIP', 'await skipPlayer();', (w, ctx, check) => {
@@ -77,6 +79,7 @@ async function run(){
     check('holds for Next Player', auc.awaitingNext === true);
     check('remembers who to skip', auc.excludeId === 'p1');
     check('no sales row logged', !find(w, 'update', '/'));
+    check('any "going once/twice" call is cleared', auc.callState === null);
   });
 
   await scenario(suite, 'NEXT after skip', `
@@ -115,6 +118,7 @@ async function run(){
     check('bidding closed', auc.biddingOpen === false);
     check('pause time recorded', typeof auc.pausedAt === 'number');
     check('current lot preserved', auc.currentPlayerId === undefined, 'must not clear the player');
+    check('any "going once/twice" call is cleared', auc.callState === null);
   });
 
   await scenario(suite, 'SIGN OUT with nothing running writes nothing', `
@@ -146,6 +150,7 @@ async function run(){
     check('price back to base', auc.currentPrice === 0);
     check('leader cleared', auc.leaderTeamId === null);
     check('player stays up', auc.currentPlayerId === undefined);
+    check('any "going once/twice" call is cleared', auc.callState === null);
   });
 
   await scenario(suite, 'PAUSE button', 'await pauseBidding();', (w, ctx, check) => {
@@ -154,6 +159,7 @@ async function run(){
     check('bidding closed', auc.biddingOpen === false);
     check('reason recorded=manual', auc.pauseReason === 'manual');
     check('current lot preserved', auc.currentPlayerId === undefined);
+    check('any "going once/twice" call is cleared', auc.callState === null);
   });
 
   await scenario(suite, 'SIGN OUT records its own reason', "await pauseSession('signout');", (w, ctx, check) => {
@@ -172,6 +178,7 @@ async function run(){
     check('not awaiting next', auc.awaitingNext === false);
     check('stale last result cleared', auc.lastResult === null);
     check('no player records touched', !find(w, 'update', '/'), 'results must be preserved as-is');
+    check('any "going once/twice" call is cleared', auc.callState === null);
   });
 
   await scenario(suite, 'REOPEN', `
@@ -182,6 +189,7 @@ async function run(){
     check('completion time cleared', auc.completedAt === null);
     check('bidding still shut', auc.biddingOpen === false, 'nothing is up yet');
     check('not paused', auc.paused === false);
+    check('any "going once/twice" call is cleared', auc.callState === null);
   });
 
   await scenario(suite, 'NEXT after reopen clears the completed flag', `
@@ -197,6 +205,38 @@ async function run(){
     const d = find(w, 'onDisconnect', 'auction');
     check('pauses if the console drops', !!d && d.value.paused === true && d.value.biddingOpen === false);
     check('  tagged as a disconnect', !!d && d.value.pauseReason === 'disconnect');
+    check('  any "going once/twice" call is cleared too', !!d && d.value.callState === null);
+  });
+
+  // ---- "Going once… going twice…" — callOnce()/callTwice()/cancelCall()
+  // are the only writers of auction.callState; every scenario above proves
+  // every OTHER auction-node write clears it back to null. ----
+
+  await scenario(suite, 'GOING ONCE', 'await callOnce();', (w, ctx, check) => {
+    const auc = (find(w, 'update', 'auction') || {}).value || {};
+    check('sets the call state', auc.callState === 'once');
+  });
+
+  await scenario(suite, 'GOING TWICE', 'await callTwice();', (w, ctx, check) => {
+    const auc = (find(w, 'update', 'auction') || {}).value || {};
+    check('sets the call state', auc.callState === 'twice');
+  });
+
+  await scenario(suite, 'CANCEL CALL', 'await cancelCall();', (w, ctx, check) => {
+    const auc = (find(w, 'update', 'auction') || {}).value || {};
+    check('clears the call state', auc.callState === null);
+  });
+
+  await scenario(suite, 'GOING ONCE refuses to call with no bid yet', `
+    mstate.auction = {currentPlayerId:'p1', currentPrice:0, leaderTeamId:null, biddingOpen:true};
+    await callOnce();`, (w, ctx, check) => {
+    check('nothing written — nobody has bid', w.length === 0);
+  });
+
+  await scenario(suite, 'GOING TWICE refuses to call with no bid yet', `
+    mstate.auction = {currentPlayerId:'p1', currentPrice:0, leaderTeamId:null, biddingOpen:true};
+    await callTwice();`, (w, ctx, check) => {
+    check('nothing written — nobody has bid', w.length === 0);
   });
 
   // ---- Live Results dedup: a player's sale row must be a single, live
