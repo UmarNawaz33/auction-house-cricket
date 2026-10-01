@@ -471,6 +471,46 @@ team.html could get the identical tiles too**.
    answer — don't reintroduce (a) or (b) from an old diff without being
    asked.
 
+## 5b. End-of-auction awards + team target list (2026-10-03)
+
+Neither adds a database field or a Firebase write. Covered by
+`tests/awards-targets.test.js`.
+
+1. **End-of-auction awards** (public.js only) — `computeAwards(sales,
+   teamsArr)` is a pure function; `renderAwardsPanel()` renders it. Shown
+   on the COMPLETED home screen only, and only on request: a gold
+   "🏆 View auction awards" button (`toggleAwards()`/`showAwards`, same
+   pattern as `togglePastResults()`/`showPastResults`) sits beside the
+   original "View previous bidding results" button in `.pv-hero-actions`.
+   **Keep that results button's exact wording** — `endgame.test.js` asserts
+   it. Six awards: Most Expensive Buy, Biggest Bidding Jump (price/base
+   ratio), Best Bargain (lowest price/base ratio, ties → higher base),
+   Biggest Spender, Thriftiest Team (most purse left among teams that bought
+   someone, only when 2+ did), Biggest Squad. **Player awards use auction
+   sales only (`via !== 'assigned'`)**, same distinction as `soldLabel()`
+   and the fireworks gate: a retained player was never auctioned. Team
+   awards read squads (`spentOf`/`remainingOf`/`squadCountOf`), retentions
+   included, so they match the Teams panel. Any award that can't be
+   computed (no data, zero base price) is dropped rather than shown empty.
+   Ties go to the first found (sales newest-first, teams in database
+   order). CSS (`.pv-award*`, `.pv-btn-gold`, `.pv-hero-actions`) lives in
+   public.js's own `pvCss()`; each card's accent bar takes the winner's
+   team hue.
+2. **Team target list** (team.js only) — `renderTargetList()` lists every
+   still-pending player as a star chip (starred first); tapping calls
+   `toggleTarget(id)`. When a starred player is on the block, the dashboard
+   shows a pulsing "🎯 Your target is up" alert and adds `.is-target` to the
+   lot card. **Stored ONLY in `localStorage`, key `pv_targets_<teamId>`**:
+   no Firebase write, no rules change, private to that team on that device.
+   Every storage access is in try/catch because localStorage can be missing
+   or throw (private mode; the Node harness has none — tests inject a fake
+   `ctx.localStorage`); without it the list just lives in memory for the
+   tab. Loaded lazily by `loadTargets()` and re-read if the signed-in team
+   changes. The list hides once the auction is complete or nothing is
+   pending. CSS (`.pv-target*`) lives in theme.css, because team.html has
+   no injected sheet of its own; `.pv-target` is a `<button>`, so it zeroes
+   the generic button rule's shadow, blur and hover lift (the §6a lesson).
+
 ## 6. Known collisions — check before naming a new class
 
 Three real bugs shipped from name collisions with Bootstrap, now fixed and
@@ -520,7 +560,7 @@ the DOM, load the real `js/*.js` files unmodified into a VM context, and
 assert on what gets rendered or written.
 
 ```
-node tests/run.js                    # everything (484 checks, well under 1s)
+node tests/run.js                    # everything (521 checks, well under 1s)
 node tests/run.js render markup      # only the named suites
 node tests/run.js --list             # see suite names
 ```
@@ -540,6 +580,7 @@ node tests/run.js --list             # see suite names
 | `public-sound` | public-sound.test.js | `enablePublicSound()`: success unlocks + updates `#soundToggle` + confirms with a toast; a genuinely rejected `play()` leaves `publicSoundEnabled` false and the button retry-able, with an error toast; missing `Audio` doesn't throw. `playPublicSoldSound()`: silent before enabling (even for a real new sale), wired to the same gate as the takeover/fireworks once enabled (first load, repeat, unsold, assign, re-sale — same matrix as `takeover`), and reuses one `<audio>` element rather than rebuilding it. Plus: `index.html` has `#soundToggle` wired to `enablePublicSound()`, and the other three pages don't | public.js's `enablePublicSound`/`playPublicSoldSound`/`updateSoundToggle`, `index.html`'s `#soundToggle`, or `maybeCelebrateNewSale` |
 | `audience-features` | audience-features.test.js | The audience features (§5), all public.js-only: **record banner** — `seedRecordFromHistory`/`isNewRecord`/`updateRecord` (never a tie, never the first-ever sale, `via:'assigned'` never counts) and `soldTakeoverMarkup(sale,{isRecord})`'s content, end-to-end through the real `maybeCelebrateNewSale` gate; **bidding war** — `handleAuctionTransition()` registers a pulse only on a GENUINE bid (not an unrelated `auction` write), stale pulses outside `BIDDING_WAR_WINDOW_MS` are pruned, `registerBid()`/`isBiddingWarActive()`'s timing, and the tag's presence in `renderLiveLot()`; **reveal animation** — `__justRevealed` set for a new player and NOT for a bid on the same one, consumed (reset) after exactly one render via the real registered `db.ref('auction').on('value')` listener (`ref()._trigger()`, dom-stub.js); **reactions** — zero Firebase writes ever, the bar injected once and not duplicated, `sendReaction()`'s particle creation/spread/self-removal, `clearReactions()`, and **a regression test for a real bug**: `REACTION_EMOJI` must be declared before the top-level `injectReactionBar()` call that reads it (§6a); **page layout** — Teams renders before Live Results on the live page (moved by request; the completed/home screen's order was deliberately left alone) | any of the audience features above, `renderPublic()`'s live-branch section order, or `handleAuctionTransition`/`registerBid`/`isBiddingWarActive` specifically since several features share it |
 | `showtime-features` | showtime-features.test.js | The §5a features, spanning shared.js/moderator.js/team.js/public.js: `callBannerMarkup()`'s output for 'once'/'twice'/null/unrecognised, and that it's wired into BOTH public.js's live lot and team.js's dashboard (Firebase-write coverage for `callOnce`/`callTwice`/`cancelCall`/clearing lives in `flow`/`bidsteps` instead, next to every other `auction` write); that `injectStageWash()`/`updateStageWash()` never throw across every auction shape (their actual CSS class output isn't assertable here — the test stub's `classList` is a no-op, see §6a — real-browser verification is what actually proved it); `isNewRecord()`'s result threading into `celebrateSaleFirework(isRecord)`'s stubbed call and into `screenShakeForRecord()` never throwing; that `.pv-lot.is-revealing` still appears/doesn't-replay (the CSS-only reveal upgrade didn't touch this JS); that `lotMarkup()`'s leading capsule and `teamTilesMarkup()` tag the SAME team with the SAME `hueFor()` class, and that public.js's `renderTeamsPanel()` calls `teamTilesMarkup()`; and that team.js's dashboard shows the signed-in team's OWN name as a plain `.chip` (not a coloured tile), first in the `.chip-row` ahead of Purse Remaining/Squad Size, with no other team rendered anywhere (the all-teams grid and the single colour-tile revision are both gone) | any of the §5a features, `callBannerMarkup`, `teamTilesMarkup`, `lotMarkup`'s leader hue class, `auction.callState` generally, or team.js's own-team chip |
+| `awards-targets` | awards-targets.test.js | §5b. **Awards:** `computeAwards()` picks the right winner for each award, uses auction sales only (a retained player at a higher price never wins a player award), never lets an unsold player win, and degrades gracefully (no data, retained-only, zero base price, a single buying team); the button appears on the completed home screen only when there's history, toggles the panel without opening the results table, never shows the panel while the auction is live, and HTML-escapes winner names. **Targets:** pending players listed, sold ones not; starring saves to `localStorage` under `pv_targets_<teamId>` with zero Firebase writes; starred players sort first; un-starring works; a reload restores the list; another team on the same device can't see it; the alert and lot ring appear only for a starred player on the block; the list hides once the auction is complete; with no localStorage at all, it renders and still works in memory | public.js's `computeAwards`/`renderAwardsPanel`/`toggleAwards`/`renderHomeScreen` buttons, or team.js's target-list functions/alert |
 
 **What these tests do NOT catch** — they run in a headless `vm` context with
 a fake DOM, not a real browser: no actual CSS is applied, so a visual/layout

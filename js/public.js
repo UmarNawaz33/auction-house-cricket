@@ -71,6 +71,9 @@ let pv = { settings:{currencyUnit:'Cr'}, teams:{}, players:{}, auction:{}, sales
 // results stay one click away rather than on show.
 let showPastResults = false;
 function togglePastResults(){ showPastResults = !showPastResults; renderPublic(); }
+// Same idea for the end-of-auction awards: on request, never auto-shown.
+let showAwards = false;
+function toggleAwards(){ showAwards = !showAwards; renderPublic(); }
 
 // TEMP FIREWORKS state — part of the temporary fireworks-on-sold feature
 // (search this file for "TEMP FIREWORKS" / "TEMP_FIREWORKS" to find every
@@ -547,6 +550,7 @@ function renderPublic(){
     c.innerHTML = `
       <div class="pv-scope container-xl px-3 px-md-4">
         ${renderHomeScreen()}
+        ${showAwards ? renderAwardsPanel(teamsArr) : ''}
         ${showPastResults ? `
           ${renderResultsPanel('Previous Bidding Results', 'Every player that went under the hammer, newest first.')}
           ${renderTeamsPanel(teamsArr, 'Final Squads')}
@@ -646,10 +650,91 @@ function renderHomeScreen(){
           <div class="pv-stat-lbl">Total spend</div>
         </div>
       </div>
-      <button type="button" class="pv-btn" onclick="togglePastResults()">
-        ${showPastResults ? 'Hide previous results' : 'View previous bidding results'}
-      </button>`
+      <div class="pv-hero-actions">
+        <button type="button" class="pv-btn pv-btn-gold" onclick="toggleAwards()">
+          ${showAwards ? 'Hide auction awards' : '🏆 View auction awards'}
+        </button>
+        <button type="button" class="pv-btn" onclick="togglePastResults()">
+          ${showPastResults ? 'Hide previous results' : 'View previous bidding results'}
+        </button>
+      </div>`
     : `<p class="pv-hero-none">No results to show yet.</p>`}
+  </section>`;
+}
+
+/* ---------------- End-of-auction awards ----------------
+   Shown on the completed home screen on request (toggleAwards()), next to
+   the results button. Everything is derived from data already loaded — no
+   new Firebase node, nothing stored.
+
+   Player awards use REAL auction sales only (`via !== 'assigned'`): a
+   pre-auction retention never went under the hammer, so it can't be the
+   "most expensive buy" or a "bargain" (same distinction soldLabel() and the
+   fireworks gate draw — read `via`, never player.status). Team awards read
+   the squads (spentOf/remainingOf/squadCountOf), i.e. the same numbers the
+   Teams panel shows, retentions included — a team's spend is its spend.
+
+   Each award is null when it can't be computed (no sales, no teams, a zero
+   base price); the panel only renders the ones that exist. Ties go to the
+   first one found in a stable order — sales are newest-first, teams in
+   database order — so a given result set always names the same winner. */
+function computeAwards(sales, teamsArr){
+  const auctioned = sales.filter(s => s.result === 'sold' && s.via !== 'assigned' && s.price != null);
+  const pick = (arr, better) => arr.reduce((best, x) => (best === null || better(x, best)) ? x : best, null);
+
+  const mostExpensive = pick(auctioned, (a, b) => a.price > b.price);
+  const withBase = auctioned.filter(s => s.basePrice > 0);
+  const biggestJump = pick(withBase, (a, b) => (a.price / a.basePrice) > (b.price / b.basePrice));
+  // Lowest price-to-base ratio; on a tie, the player with the higher base
+  // price is the better steal (a 20 Cr player at base beats a 2 Cr one).
+  const bestBargain = pick(withBase, (a, b) => {
+    const ra = a.price / a.basePrice, rb = b.price / b.basePrice;
+    return ra < rb || (ra === rb && a.basePrice > b.basePrice);
+  });
+
+  const buyers = teamsArr.filter(t => squadCountOf(t) > 0);
+  const biggestSpender = pick(buyers, (a, b) => spentOf(a) > spentOf(b));
+  const thriftiest = pick(buyers, (a, b) => remainingOf(a) > remainingOf(b));
+  const biggestSquad = pick(buyers, (a, b) => squadCountOf(a) > squadCountOf(b));
+
+  return [
+    mostExpensive && {icon:'💰', title:'Most Expensive Buy', winner:mostExpensive.name,
+      detail:`${mostExpensive.team || '—'} paid ${fmtMoney(mostExpensive.price)}`, hue:hueFor(mostExpensive.team)},
+    biggestJump && biggestJump.price > biggestJump.basePrice && {icon:'🚀', title:'Biggest Bidding Jump', winner:biggestJump.name,
+      detail:`${(biggestJump.price / biggestJump.basePrice).toFixed(1).replace(/\.0$/,'')}× base — ${fmtMoney(biggestJump.basePrice)} → ${fmtMoney(biggestJump.price)}`, hue:hueFor(biggestJump.team)},
+    bestBargain && {icon:'🏷️', title:'Best Bargain', winner:bestBargain.name,
+      detail:`${bestBargain.team || '—'} got them for ${fmtMoney(bestBargain.price)} (base ${fmtMoney(bestBargain.basePrice)})`, hue:hueFor(bestBargain.team)},
+    biggestSpender && {icon:'🔥', title:'Biggest Spender', winner:biggestSpender.name,
+      detail:`${fmtMoney(spentOf(biggestSpender))} spent`, hue:hueFor(biggestSpender.name)},
+    thriftiest && buyers.length > 1 && {icon:'🐷', title:'Thriftiest Team', winner:thriftiest.name,
+      detail:`${fmtMoney(remainingOf(thriftiest))} still in the purse`, hue:hueFor(thriftiest.name)},
+    biggestSquad && {icon:'👥', title:'Biggest Squad', winner:biggestSquad.name,
+      detail:`${squadCountOf(biggestSquad)} player${squadCountOf(biggestSquad)===1?'':'s'} signed`, hue:hueFor(biggestSquad.name)},
+  ].filter(Boolean);
+}
+
+function renderAwardsPanel(teamsArr){
+  const awards = computeAwards(pv.sales, teamsArr);
+  return `
+  <section class="pv-panel pv-awards">
+    <div class="pv-head">
+      <h2 class="pv-head-title">🏆 Auction Awards</h2>
+      <span class="pv-count">${awards.length}</span>
+    </div>
+    <p class="pv-muted">The standout moments of this auction.</p>
+    ${awards.length === 0
+      ? `<div class="pv-empty">No awards to hand out — nothing was sold at auction.</div>`
+      : `<div class="row g-3">
+          ${awards.map((a, i) => `
+          <div class="col-12 col-sm-6 col-lg-4">
+            <div class="pv-award h-100 ${a.hue}" style="animation-delay:${i * 90}ms;">
+              <div class="pv-award-icon" aria-hidden="true">${a.icon}</div>
+              <div class="pv-award-title">${a.title}</div>
+              <div class="pv-award-winner">${escapeHtml(a.winner)}</div>
+              <div class="pv-award-detail">${escapeHtml(a.detail)}</div>
+            </div>
+          </div>`).join('')}
+        </div>`}
   </section>`;
 }
 
@@ -1182,6 +1267,47 @@ body.pv-shake{animation:pvShake .55s cubic-bezier(.36,.07,.19,.97) both;}
 }
 .pv-btn:hover{transform:translateY(-2px); filter:brightness(1.07); box-shadow:inset 0 1px 0 rgba(255,255,255,.55), 0 20px 38px -12px rgba(10,132,255,.95);}
 .pv-btn:active{transform:translateY(0);}
+.pv-hero-actions{display:flex; gap:12px; justify-content:center; flex-wrap:wrap;}
+.pv-btn-gold{
+  color:#1A1000;
+  background:linear-gradient(180deg, var(--pv-orange-l), var(--pv-orange));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 -8px 18px -12px rgba(0,0,0,.4), 0 14px 32px -12px rgba(228,174,73,.85);
+}
+.pv-btn-gold:hover{box-shadow:inset 0 1px 0 rgba(255,255,255,.55), 0 20px 38px -12px rgba(228,174,73,.95);}
+
+/* ---- end-of-auction awards ----
+   renderAwardsPanel()/computeAwards() (above, this file). Each card picks
+   up its winner's team hue (hueFor), same colour that team has in the
+   Teams panel, as a top accent bar + icon glow. Cards rise in one after
+   another (animation-delay set inline per card). */
+.pv-award{
+  position:relative; overflow:hidden; text-align:center;
+  padding:24px 18px 20px; border-radius:var(--pv-r-in);
+  background:linear-gradient(160deg, rgba(255,255,255,.10), rgba(255,255,255,.03));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
+  --pv-award: var(--pv-orange);
+  animation:pvAwardIn .5s cubic-bezier(.2,.8,.3,1) both;
+}
+.pv-award::before{content:''; position:absolute; left:0; right:0; top:0; height:3px; background:var(--pv-award);}
+.pv-award.hue-blue  {--pv-award:var(--pv-blue);}
+.pv-award.hue-green {--pv-award:var(--pv-green);}
+.pv-award.hue-purple{--pv-award:var(--pv-purple);}
+.pv-award.hue-orange{--pv-award:var(--pv-orange);}
+.pv-award.hue-pink  {--pv-award:var(--pv-pink);}
+.pv-award.hue-teal  {--pv-award:var(--pv-teal);}
+.pv-award-icon{font-size:38px; line-height:1; margin-bottom:12px; filter:drop-shadow(0 6px 14px rgba(0,0,0,.5));}
+.pv-award-title{
+  font-size:11px; font-weight:680; letter-spacing:1.3px; text-transform:uppercase;
+  color:var(--pv-ink-3); margin-bottom:8px;
+}
+.pv-award-winner{
+  font-family:var(--font-display); text-transform:uppercase;
+  font-size:clamp(22px,2.6vw,28px); font-weight:700; letter-spacing:-.2px; line-height:1.1;
+  color:#fff; margin-bottom:6px; overflow-wrap:anywhere;
+}
+.pv-award-detail{font-size:13px; color:var(--pv-ink-2); line-height:1.45;}
+@keyframes pvAwardIn{from{opacity:0; transform:translateY(14px) scale(.97);} to{opacity:1; transform:none;}}
+@media(prefers-reduced-motion:reduce){ .pv-award{animation:none;} }
 
 /* ---- sold takeover ----
    Fixed over everything except the fireworks canvas (z-index 9999), so the

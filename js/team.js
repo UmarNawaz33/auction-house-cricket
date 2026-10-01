@@ -68,6 +68,71 @@ function myTeam(){ return tstate.teams[tSession.teamId] ? {id:tSession.teamId, .
 function getPlayer(id){ return id && tstate.players[id] ? {id, ...tstate.players[id]} : null; }
 function getTeam(id){ return id && tstate.teams[id] ? {id, ...tstate.teams[id]} : null; }
 
+/* ---------------- Target list ----------------
+   The owner stars the players they want; when a starred player comes on the
+   block, the dashboard flashes "Your target is up!". Stored ONLY in this
+   browser's localStorage, keyed per team: no Firebase write, no
+   database.rules.json change, never visible to other teams (a team's
+   wishlist is private by nature). localStorage can be missing or throw
+   (private mode, blocked storage, the Node test harness has none at all),
+   so every read/write is wrapped — the list then just lives in memory for
+   this tab. Loaded lazily on first use, not at file load, and reloaded if
+   the signed-in team changes. */
+let __targets = null;
+let __targetsKey = null;
+function targetsKey(){ return 'pv_targets_' + ((tSession && tSession.teamId) || ''); }
+function loadTargets(){
+  const key = targetsKey();
+  if(__targets && __targetsKey === key) return __targets;
+  __targetsKey = key;
+  __targets = [];
+  try{
+    const arr = JSON.parse(localStorage.getItem(key) || '[]');
+    if(Array.isArray(arr)) __targets = arr.filter(x => typeof x === 'string');
+  }catch(e){ /* unavailable or corrupt — start empty */ }
+  return __targets;
+}
+function isTarget(pid){ return !!pid && loadTargets().includes(pid); }
+function toggleTarget(pid){
+  const list = loadTargets();
+  const i = list.indexOf(pid);
+  if(i === -1) list.push(pid); else list.splice(i, 1);
+  try{ localStorage.setItem(targetsKey(), JSON.stringify(list)); }catch(e){ /* keep it in memory */ }
+  render();
+}
+
+/** Every still-pending player, starred ones first, as tappable star chips.
+ *  Hidden once the auction is complete or nobody is left to target. The
+ *  player currently on the block is still 'pending' (status only changes
+ *  when sold/unsold), so it stays in the list, tagged "on the block". */
+function renderTargetList(auc){
+  if(isCompleted(auc)) return '';
+  const targets = loadTargets();
+  const pending = Object.entries(tstate.players)
+    .map(([id,p]) => ({id, ...p}))
+    .filter(p => p.status === 'pending')
+    .sort((a,b) => (targets.includes(b.id) - targets.includes(a.id)) || String(a.name||'').localeCompare(String(b.name||'')));
+  if(!pending.length) return '';
+  const starred = pending.filter(p => targets.includes(p.id)).length;
+  return `
+  <div class="card">
+    <h2>🎯 Target List <span class="n">${starred} starred</span></h2>
+    <p class="hint" style="margin-bottom:12px;">Tap a player to star them. When one of your targets comes up for auction, this page flashes to tell you. Saved only on this device — no other team can see it.</p>
+    <div class="pv-target-list">
+      ${pending.map(p => {
+        const on = targets.includes(p.id);
+        const live = auc.currentPlayerId === p.id;
+        return `
+      <button type="button" class="pv-target${on ? ' is-on' : ''}${live ? ' is-live' : ''}" onclick="toggleTarget('${p.id}')" aria-pressed="${on}">
+        <span class="pv-target-star" aria-hidden="true">${on ? '★' : '☆'}</span>
+        <span class="pv-target-name">${escapeHtml(p.name)}</span>
+        <span class="pv-target-meta">${escapeHtml(p.category || '')}${p.category ? ' · ' : ''}Base ${fmtMoney(p.basePrice)}</span>
+      </button>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
 function renderDashboard(){
   const team = myTeam();
   if(!team){ return `<div class="card"><div class="empty-state"><div class="icn">⏳</div>Waiting for the moderator to set up teams…</div></div>`; }
@@ -90,6 +155,7 @@ function renderDashboard(){
   const canBid = steps.some(s=>s.ok);
 
   const squadEntries = team.squad ? Object.entries(team.squad) : [];
+  const targetUp = !!player && isTarget(player.id);
 
   return `
   <div class="chip-row">
@@ -100,9 +166,14 @@ function renderDashboard(){
 
   ${renderTeamStatusBanner(auc)}
   ${callBannerMarkup(auc)}
+  ${targetUp ? `
+  <div class="pv-target-alert" role="status" aria-live="assertive">
+    <span class="pv-target-alert-icon" aria-hidden="true">🎯</span>
+    <span>Your target is up — <strong>${escapeHtml(player.name)}</strong></span>
+  </div>` : ''}
 
   ${player ? `
-  <div class="card pv-lot">
+  <div class="card pv-lot${targetUp ? ' is-target' : ''}">
     ${lotMarkup(player, {
       eyebrow: `<span class="pv-live-dot"></span>On the block &middot; bidding for ${team.name}`,
       price: auc.currentPrice || player.basePrice,
@@ -129,6 +200,8 @@ function renderDashboard(){
     <h2 style="justify-content:center;">${team.name}</h2>
     <div class="empty-state"><div class="icn">⏸</div>No player currently up for auction. Waiting for the moderator…</div>
   </div>`}
+
+  ${renderTargetList(auc)}
 
   <div class="card">
     <h2>My Squad <span class="n">${squadEntries.length}</span></h2>

@@ -692,6 +692,41 @@ tr:hover td{background:rgba(255,255,255,.03);}
   .pv-call-banner, .pv-call-text, .pv-call-dots{animation:none;}
 }
 
+/* ---- team owner's target list (team.js only) ----
+   renderTargetList()/the "Your target is up" alert in team.js. Lives here
+   because team.html has no injected sheet of its own. .pv-target is a
+   <button>, so it zeroes the generic button{} rule's box-shadow, blur and
+   hover lift explicitly (the §6a "flat/plain override" lesson). */
+.pv-target-list{display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap:8px;}
+.pv-target{
+  position:relative; display:flex; flex-direction:column; align-items:flex-start; gap:2px;
+  padding:10px 14px 10px 40px; border-radius:10px; text-align:left;
+  background:rgba(255,255,255,.04); border:1px solid var(--line);
+  box-shadow:none; -webkit-backdrop-filter:none; backdrop-filter:none;
+}
+.pv-target:hover{transform:none; background:rgba(255,255,255,.08); border-color:var(--line-strong);}
+.pv-target-star{position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:18px; line-height:1; color:var(--pv-ink-3);}
+.pv-target.is-on{background:rgba(228,174,73,.10); border-color:rgba(228,174,73,.55);}
+.pv-target.is-on .pv-target-star{color:var(--pv-orange-l); text-shadow:0 0 12px rgba(228,174,73,.7);}
+.pv-target-name{font-size:13.5px; font-weight:650; color:#fff;}
+.pv-target-meta{font-size:11.5px; font-weight:500; color:var(--pv-ink-3);}
+.pv-target.is-live .pv-target-meta::after{content:' · on the block'; color:var(--pv-green-l); font-weight:700;}
+
+.pv-target-alert{
+  display:flex; align-items:center; gap:12px;
+  margin-bottom:18px; padding:16px 20px; border-radius:var(--pv-r);
+  font-size:16px; color:#FFE7B8;
+  background:linear-gradient(90deg, rgba(228,174,73,.28), rgba(228,174,73,.10));
+  border:1px solid rgba(228,174,73,.6);
+  animation:pvTargetFlash 1.1s ease-in-out infinite;
+}
+.pv-target-alert strong{color:#fff;}
+.pv-target-alert-icon{font-size:24px; line-height:1;}
+.card.pv-lot.is-target{border-color:rgba(228,174,73,.6); animation:pvTargetRing 1.1s ease-in-out infinite;}
+@keyframes pvTargetFlash{0%,100%{box-shadow:0 0 0 rgba(228,174,73,0);} 50%{box-shadow:0 0 34px -4px rgba(228,174,73,.75);}}
+@keyframes pvTargetRing{0%,100%{box-shadow:0 0 0 0 rgba(228,174,73,0);} 50%{box-shadow:0 0 0 3px rgba(228,174,73,.45), 0 0 40px -8px rgba(228,174,73,.7);}}
+@media(prefers-reduced-motion:reduce){ .pv-target-alert, .card.pv-lot.is-target{animation:none;} }
+
 /* ---- status banners ---- */
 .status-banner{
   border-radius:var(--pv-r); padding:22px 24px;
