@@ -223,7 +223,7 @@ be sanity-checked against every caller before it ships:
 | shared.js symbol | used by |
 |---|---|
 | `getSession`, `saveSession`, `clearSession`, `signOutAll`, `claimKey`, `adminLogin`, `ensureAnonymousAuth` | session/auth — moderator, team, admin (admin also self-checks via Firebase auth state) |
-| `lotMarkup` | **public.js, moderator.js, team.js** — the player-on-the-block panel. One template, three callers; changing its signature means checking all three call sites, not just one. The leading capsule carries `hueFor(leader.name)` unconditionally (added 2026-10-02) — public.js's own sheet is the only one that currently reacts to it (§5a); harmless on moderator.js/team.js, which keep theme.css's fixed green. (A `priceId` option existed briefly for a ticking-price-counter feature; that feature was removed by request the same day — `lotMarkup` has no such option any more.) |
+| `lotMarkup` | **public.js, moderator.js, team.js, admin.js** — the player-on-the-block panel. One template, four callers; changing its signature means checking every call site, not just one. admin.js's Live Auction tab (added 2026-10-04) renders it inside a half-width card, so theme.css's `.pv-admin-lot` forces it into a single centred column there (see §5). The leading capsule carries `hueFor(leader.name)` unconditionally (added 2026-10-02) — public.js's own sheet is the only one that currently reacts to it (§5a); harmless on moderator.js/team.js, which keep theme.css's fixed green. (A `priceId` option existed briefly for a ticking-price-counter feature; that feature was removed by request the same day — `lotMarkup` has no such option any more.) |
 | `callBannerMarkup` | public.js, team.js — the "going once / going twice" full-screen call (§3's `callState`). NOT moderator.js, which shows a plain text readout next to its own call buttons instead — see §3. Pure string builder: `''` when there's no active call, so callers can drop it straight into a template unconditionally without an `if`. |
 | `teamTilesMarkup` | public.js's `renderTeamsPanel()` only (added 2026-10-02, §5a). NOT team.js — it tried this (the full all-teams grid), then a single hand-built `.pv-team`-styled tile, then settled on a plain `.chip` built inline instead (see §5a item 7); none of those team.js revisions call this function today. The empty-teams case is left to the caller (public.js's `.pv-empty`); this function only ever returns the grid. |
 | `escapeHtml` | public.js's sold takeover. **Use it for text between tags; `escapeAttr` only escapes `"` and is for attribute values.** Names in the takeover come from `recentSales` (moderator/admin-written), but they're escaped anyway. |
@@ -260,7 +260,20 @@ design**:
   (added 2026-10-02) `.pv-team*`/`.pv-dot*`/`.pv-bar*` — the Teams tile
   grid (`teamTilesMarkup()`, §4), moved here from public.js's own sheet
   once team.js needed the identical tiles too (team.html's own "Teams"
-  card — §5a). If you change how the player-on-the-block looks, this is
+  card — §5a). Also (2026-10-04) `.pv-admin-*`: admin.html's Live Auction
+  tab (`renderLiveTab`). Its Current Lot is the shared `lotMarkup()` card
+  forced to one centred column (`.pv-admin-lot`), since it sits in a
+  half-width card. Three `.pv-admin-stat` tiles (Players pending / Bidding
+  open-closed with a coloured dot / Last update) sit in their own "Auction
+  Status" card, stacked under Team Purses in the right-hand column
+  (`.pv-admin-side` wrapper; moved there from under the lot by request). Those
+  replaced three `.stats-row` lines, a class that is ONLY styled under
+  `.team-card`; in a plain `.card` its label and value ran together
+  ("Players still pending4"). **Don't use `.stats-row` outside
+  `.team-card`.** Between lots there's a "Last called" block
+  (`.pv-admin-last`), and the cols-2 grid uses
+  `align-items:start` (`:has(> .pv-admin-live)`) so Team Purses isn't
+  stretched to the lot card's height. If you change how the player-on-the-block looks, this is
   almost always the file to edit — a change here reaches public.js,
   moderator.js, and team.js at once.
 - **`js/public.js`'s `pvCss()`** (injected into `<head>` at runtime, public

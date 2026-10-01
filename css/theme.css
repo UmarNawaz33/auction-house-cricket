@@ -608,6 +608,57 @@ tr:hover td{background:rgba(255,255,255,.03);}
 }
 .pv-leader-none{color:var(--pv-ink-3);}
 
+/* ---- admin.html's Live Auction tab (admin.js renderLiveTab) ----
+   The Current Lot reuses the shared lotMarkup() player card, but it sits in
+   a HALF-width card (grid cols-2), so its usual photo-left/detail-right
+   split from 900px up would be cramped: force a single, centred column
+   here. Three stat tiles in the same language as .chip (in an "Auction
+   Status" card under Team Purses) replace the old "label value" rows that
+   sat under the lot — those used .stats-row, which is only styled
+   under .team-card, so inside a plain .card the label and value ran
+   together ("Players still pending4"). */
+/* the lot card is much taller than Team Purses beside it; don't stretch the
+   purses card into a mostly-empty box to match */
+.grid.cols-2:has(> .pv-admin-live){align-items:start;}
+.pv-admin-lot .pv-lot-grid{grid-template-columns:minmax(0,1fr); gap:18px;}
+.pv-admin-lot .pv-lot-detail{text-align:center;}
+.pv-admin-lot .pv-photo-frame{max-width:190px;}
+.pv-admin-lot .pv-meta,
+.pv-admin-lot .pv-bid{justify-content:center;}
+.pv-admin-lot .pv-bidblock{display:flex; flex-direction:column; align-items:center; gap:12px;}
+.pv-admin-lot .pv-bidblock .pv-bid{margin-bottom:0;}
+.pv-admin-lot .pv-bidblock .pv-leader{margin-bottom:0;}
+.pv-admin-lot .pv-name{font-size:clamp(26px,2.6vw,34px);}
+.pv-admin-lot .pv-bid .pv-amt{font-size:clamp(46px,5vw,64px);}
+
+.pv-admin-last{text-align:center; padding:26px 10px 8px;}
+.pv-admin-last-lbl{font-size:11px; font-weight:680; letter-spacing:1.4px; text-transform:uppercase; color:var(--pv-ink-3); margin-bottom:10px;}
+.pv-admin-last-name{
+  font-family:var(--font-display); text-transform:uppercase;
+  font-size:clamp(26px,2.6vw,32px); font-weight:700; line-height:1.05; color:#fff; margin-bottom:12px;
+}
+.pv-admin-last-sub{margin-top:12px; font-size:14px; color:var(--pv-ink-2);}
+.pv-admin-last-sub b{color:#fff;}
+
+/* the three status tiles live in their own "Auction Status" card, stacked
+   under Team Purses in the right-hand column (.pv-admin-side) */
+.pv-admin-stats{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:10px;}
+.pv-admin-stat{
+  padding:13px 14px; border-radius:var(--pv-r-in);
+  background:rgba(255,255,255,.04); border:1px solid var(--line);
+}
+.pv-admin-stat .val{
+  display:flex; align-items:center; gap:8px;
+  font-family:var(--font-display); font-size:22px; font-weight:650; line-height:1.1;
+  font-variant-numeric:tabular-nums; color:var(--pv-orange-l);
+}
+.pv-admin-stat .lbl{font-size:10.5px; text-transform:uppercase; letter-spacing:.6px; color:var(--pv-ink-3); margin-top:5px;}
+.pv-admin-dot{width:9px; height:9px; border-radius:50%; flex-shrink:0;}
+.pv-admin-dot.on{background:var(--pv-green); box-shadow:0 0 10px rgba(48,209,88,.85); animation:pvPing 2s ease-in-out infinite;}
+.pv-admin-dot.off{background:var(--bad); box-shadow:0 0 8px rgba(255,69,58,.6);}
+@media(max-width:399.98px){ .pv-admin-stats{grid-template-columns:minmax(0,1fr);} }
+@media(prefers-reduced-motion:reduce){ .pv-admin-dot.on{animation:none;} }
+
 /* ---- team tiles: inner glass, concentric with whatever panel holds them ----
    teamTilesMarkup() (shared.js) — one block per team, purse remaining as
    the headline plus a drain bar, colour-hashed via hueFor(t.name). Used by

@@ -403,23 +403,31 @@ function renderLiveTab(){
   </div>
 
   <div class="grid cols-2">
-    <div class="card">
+    <div class="card pv-admin-live">
       <h2>Current Lot</h2>
       ${player ? `
-        <div style="text-align:center;">
-          ${playerImg(player,'lg')}
-          <div style="font-family:var(--font-display);text-transform:uppercase;letter-spacing:2px;font-size:24px;font-weight:800;">${player.name}</div>
-          <div class="hint" style="margin-bottom:10px;"><span class="badge cat">${player.category||'—'}</span> · Base ${fmtMoney(player.basePrice)}</div>
-          <div class="scoreboard"><div class="price">${fmtMoney(auc.currentPrice || player.basePrice)}</div><div class="plabel">Current Bid</div></div>
-          <div class="leader-line">${leader ? `Leading: <span class="lname">${leader.name}</span>` : 'No bids yet'}</div>
+        <div class="pv-admin-lot">
+          ${lotMarkup(player, {
+            eyebrow: biddingIsOpen(auc)
+              ? `<span class="pv-live-dot"></span>On the block`
+              : `On the block &middot; bidding closed`,
+            price: auc.currentPrice || player.basePrice,
+            leader: leader
+          })}
         </div>`
-      : auc.lastResult ? `<div class="empty-state"><div class="icn">⏭</div>Last called: <b>${auc.lastResult.name}</b> — ${auc.lastResult.result==='sold' ? `sold to ${auc.lastResult.team} for ${fmtMoney(auc.lastResult.price)}` : auc.lastResult.result}</div>`
+      : auc.lastResult ? `
+        <div class="pv-admin-last">
+          <div class="pv-admin-last-lbl">Last called</div>
+          <div class="pv-admin-last-name">${escapeHtml(auc.lastResult.name)}</div>
+          <span class="badge ${auc.lastResult.result==='sold' ? 'sold' : 'unsold'}">${auc.lastResult.result==='sold' ? 'Sold' : auc.lastResult.result==='unsold' ? 'Unsold' : 'Skipped'}</span>
+          ${auc.lastResult.result==='sold'
+            ? `<div class="pv-admin-last-sub">to <b>${escapeHtml(auc.lastResult.team)}</b> for <b>${fmtMoney(auc.lastResult.price)}</b></div>`
+            : ''}
+        </div>`
       : `<div class="empty-state"><div class="icn">💤</div>Nothing on the block.</div>`}
-      <div class="stats-row" style="margin-top:14px;"><span>Players still pending</span><span>${pending}</span></div>
-      <div class="stats-row"><span>Bidding open</span><span>${biddingIsOpen(auc)?'Yes':'No'}</span></div>
-      <div class="stats-row"><span>Last update</span><span>${auc.updatedAt ? fmtTime(auc.updatedAt) : '—'}</span></div>
     </div>
 
+    <div class="pv-admin-side">
     <div class="card">
       <h2>Team Purses <span class="n">${teams.length}</span></h2>
       ${teams.length===0 ? '<p class="hint">No teams yet.</p>' : `
@@ -437,6 +445,25 @@ function renderLiveTab(){
           </div>`;
         }).join('')}
       </div>`}
+    </div>
+
+    <div class="card">
+      <h2>Auction Status</h2>
+      <div class="pv-admin-stats">
+        <div class="pv-admin-stat">
+          <div class="val">${pending}</div>
+          <div class="lbl">Players pending</div>
+        </div>
+        <div class="pv-admin-stat">
+          <div class="val"><span class="pv-admin-dot ${biddingIsOpen(auc) ? 'on' : 'off'}"></span>${biddingIsOpen(auc) ? 'Open' : 'Closed'}</div>
+          <div class="lbl">Bidding</div>
+        </div>
+        <div class="pv-admin-stat">
+          <div class="val">${auc.updatedAt ? fmtTime(auc.updatedAt) : '—'}</div>
+          <div class="lbl">Last update</div>
+        </div>
+      </div>
+    </div>
     </div>
   </div>
 
