@@ -698,6 +698,24 @@ tr:hover td{background:rgba(255,255,255,.03);}
    <button>, so it zeroes the generic button{} rule's box-shadow, blur and
    hover lift explicitly (the §6a "flat/plain override" lesson). */
 .pv-target-list{display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap:8px;}
+
+/* ---- "Picking the next player…" (team.js only) ----
+   Shown in place of the lot while the big screen's slot-machine reel is
+   still spinning (team.js's isPickHeld, timed by shared.js's
+   slotPickDurationMs), so an owner never sees the pick before the room. */
+.pv-pick-wait{text-align:center; padding:46px 26px; border-color:rgba(228,174,73,.35);}
+.pv-pick-wait h2{justify-content:center; font-size:20px; color:#fff; margin:16px 0 8px;}
+.pv-pick-wait .hint{max-width:420px; margin:0 auto;}
+.pv-pick-wait-dots{display:inline-flex; gap:8px;}
+.pv-pick-wait-dots span{
+  width:11px; height:11px; border-radius:50%; background:var(--pv-orange);
+  box-shadow:0 0 12px rgba(228,174,73,.8);
+  animation:pvPickBounce 1s ease-in-out infinite;
+}
+.pv-pick-wait-dots span:nth-child(2){animation-delay:.15s;}
+.pv-pick-wait-dots span:nth-child(3){animation-delay:.3s;}
+@keyframes pvPickBounce{0%,100%{transform:translateY(0); opacity:.45;} 50%{transform:translateY(-9px); opacity:1;}}
+@media(prefers-reduced-motion:reduce){ .pv-pick-wait-dots span{animation:none; opacity:1;} }
 .pv-target{
   position:relative; display:flex; flex-direction:column; align-items:flex-start; gap:2px;
   padding:10px 14px 10px 40px; border-radius:10px; text-align:left;
@@ -712,20 +730,21 @@ tr:hover td{background:rgba(255,255,255,.03);}
 .pv-target-meta{font-size:11.5px; font-weight:500; color:var(--pv-ink-3);}
 .pv-target.is-live .pv-target-meta::after{content:' · on the block'; color:var(--pv-green-l); font-weight:700;}
 
-.pv-target-alert{
-  display:flex; align-items:center; gap:12px;
-  margin-bottom:18px; padding:16px 20px; border-radius:var(--pv-r);
-  font-size:16px; color:#FFE7B8;
-  background:linear-gradient(90deg, rgba(228,174,73,.28), rgba(228,174,73,.10));
-  border:1px solid rgba(228,174,73,.6);
+/* "Your target is up" — a chip INSIDE the lot card (top-left, same spot
+   public.js puts its .pv-war-tag), not a separate bar above it, by
+   request. The whole card still glows (pvTargetRing). */
+.pv-target-chip{
+  display:inline-flex; align-items:center; gap:7px;
+  margin-bottom:14px; padding:6px 14px; border-radius:999px;
+  font-size:12.5px; font-weight:700; letter-spacing:.2px; color:#FFE7B8;
+  background:rgba(228,174,73,.20);
+  box-shadow:inset 0 0 0 1px rgba(228,174,73,.6);
   animation:pvTargetFlash 1.1s ease-in-out infinite;
 }
-.pv-target-alert strong{color:#fff;}
-.pv-target-alert-icon{font-size:24px; line-height:1;}
 .card.pv-lot.is-target{border-color:rgba(228,174,73,.6); animation:pvTargetRing 1.1s ease-in-out infinite;}
-@keyframes pvTargetFlash{0%,100%{box-shadow:0 0 0 rgba(228,174,73,0);} 50%{box-shadow:0 0 34px -4px rgba(228,174,73,.75);}}
+@keyframes pvTargetFlash{0%,100%{box-shadow:inset 0 0 0 1px rgba(228,174,73,.6), 0 0 0 rgba(228,174,73,0);} 50%{box-shadow:inset 0 0 0 1px rgba(228,174,73,.9), 0 0 22px -4px rgba(228,174,73,.85);}}
 @keyframes pvTargetRing{0%,100%{box-shadow:0 0 0 0 rgba(228,174,73,0);} 50%{box-shadow:0 0 0 3px rgba(228,174,73,.45), 0 0 40px -8px rgba(228,174,73,.7);}}
-@media(prefers-reduced-motion:reduce){ .pv-target-alert, .card.pv-lot.is-target{animation:none;} }
+@media(prefers-reduced-motion:reduce){ .pv-target-chip, .card.pv-lot.is-target{animation:none;} }
 
 /* ---- status banners ---- */
 .status-banner{

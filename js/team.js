@@ -9,6 +9,42 @@
 let tSession = getSession();
 let tstate = { settings:{}, teams:{}, players:{}, auction:{} };
 
+/* ---------------- Waiting out the big screen's slot-machine pick ----------------
+   When a NEW player comes on the block, the big screen spins a slot-machine
+   reel for slotPickDurationMs() (shared.js) before landing on them. Without
+   this, an owner saw the player — and could bid — while the room was still
+   watching the reel. So for that same span this page shows "Picking the
+   next player…" in place of the lot, with no bid buttons, then reveals.
+
+   Same trigger rules as public.js: never on the first auction snapshot
+   (opening the page mid-lot shows the lot straight away), never for a bid
+   on the same player, and not when there's nobody else for the big screen
+   to spin through (it skips the spin then). Purely client-side — biddingOpen
+   in Firebase is untouched; this page just doesn't offer the buttons yet.
+   Cleared by its own timer (the flag, not a wall-clock comparison), and
+   re-armed if yet another new player arrives mid-hold. Declared up here,
+   before attachListeners() can ever run. */
+let __teamAuctionSeen = false;
+let __pickHoldPlayer = null;   // the player id being held back, or null
+let __pickHoldTimer = null;
+
+function notePickTransition(prev, next){
+  const prevId = (prev && prev.currentPlayerId) || null;
+  const nextId = (next && next.currentPlayerId) || null;
+  if(nextId !== __pickHoldPlayer) clearPickHold(); // lot changed or ended mid-hold
+  const others = Object.entries(tstate.players || {}).filter(([id, p]) => p && p.name && id !== nextId).length;
+  if(__teamAuctionSeen && nextId && nextId !== prevId && others > 0){
+    __pickHoldPlayer = nextId;
+    __pickHoldTimer = setTimeout(() => { __pickHoldTimer = null; __pickHoldPlayer = null; render(); }, slotPickDurationMs());
+  }
+  __teamAuctionSeen = true;
+}
+function clearPickHold(){
+  if(__pickHoldTimer){ clearTimeout(__pickHoldTimer); __pickHoldTimer = null; }
+  __pickHoldPlayer = null;
+}
+function isPickHeld(auc){ return !!(auc && auc.currentPlayerId && auc.currentPlayerId === __pickHoldPlayer); }
+
 function renderTopActions(){
   const el = document.getElementById('topActions');
   el.innerHTML = tSession
@@ -61,7 +97,12 @@ function attachListeners(){
     render();
   });
   db.ref('players').on('value', s=>{ tstate.players = s.val()||{}; render(); });
-  db.ref('auction').on('value', s=>{ tstate.auction = s.val()||{}; render(); });
+  db.ref('auction').on('value', s=>{
+    const next = s.val()||{};
+    notePickTransition(tstate.auction, next);
+    tstate.auction = next;
+    render();
+  });
 }
 
 function myTeam(){ return tstate.teams[tSession.teamId] ? {id:tSession.teamId, ...tstate.teams[tSession.teamId]} : null; }
@@ -137,7 +178,10 @@ function renderDashboard(){
   const team = myTeam();
   if(!team){ return `<div class="card"><div class="empty-state"><div class="icn">⏳</div>Waiting for the moderator to set up teams…</div></div>`; }
   const auc = tstate.auction || {};
-  const player = auc.currentPlayerId ? getPlayer(auc.currentPlayerId) : null;
+  // While the big screen is still spinning its slot-machine reel, nothing
+  // below may reveal (or offer a bid on) the player — see notePickTransition.
+  const held = isPickHeld(auc);
+  const player = (!held && auc.currentPlayerId) ? getPlayer(auc.currentPlayerId) : null;
   const leader = auc.leaderTeamId ? getTeam(auc.leaderTeamId) : null;
   const iAmLeading = auc.leaderTeamId === team.id;
   const rem = remainingOf(team);
@@ -156,24 +200,25 @@ function renderDashboard(){
 
   const squadEntries = team.squad ? Object.entries(team.squad) : [];
   const targetUp = !!player && isTarget(player.id);
+  // The highest bid that's legal for this team right now (maxAffordableBid,
+  // shared.js) — same .chip design as its neighbours, by request.
+  const squadFull = squadCountOf(team) >= (tstate.settings.maxPlayersPerTeam || Infinity);
+  const maxBid = maxAffordableBid(team, tstate.settings);
 
   return `
   <div class="chip-row">
     <div class="chip"><div class="val">${team.name}</div><div class="lbl">My Team</div></div>
     <div class="chip"><div class="val">${fmtMoney(rem)}</div><div class="lbl">Purse Remaining</div></div>
+    <div class="chip"><div class="val">${squadFull ? 'Squad full' : fmtMoney(maxBid)}</div><div class="lbl">Max You Can Bid</div></div>
     <div class="chip"><div class="val">${squadEntries.length}</div><div class="lbl">Squad Size</div></div>
   </div>
 
   ${renderTeamStatusBanner(auc)}
   ${callBannerMarkup(auc)}
-  ${targetUp ? `
-  <div class="pv-target-alert" role="status" aria-live="assertive">
-    <span class="pv-target-alert-icon" aria-hidden="true">🎯</span>
-    <span>Your target is up — <strong>${escapeHtml(player.name)}</strong></span>
-  </div>` : ''}
 
   ${player ? `
   <div class="card pv-lot${targetUp ? ' is-target' : ''}">
+    ${targetUp ? `<div class="pv-target-chip" role="status" aria-live="assertive"><span aria-hidden="true">🎯</span> Your target is up</div>` : ''}
     ${lotMarkup(player, {
       eyebrow: `<span class="pv-live-dot"></span>On the block &middot; bidding for ${team.name}`,
       price: auc.currentPrice || player.basePrice,
@@ -195,13 +240,19 @@ function renderDashboard(){
         </div>`
     })}
   </div>`
+  : held ? `
+  <div class="card pv-pick-wait" role="status" aria-live="polite">
+    <div class="pv-pick-wait-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+    <h2>Picking the next player&hellip;</h2>
+    <p class="hint">Watch the big screen — the player appears here, ready to bid on, the moment they're revealed.</p>
+  </div>`
   : (isAwaitingNext(auc) || isCompleted(auc)) ? '' : `
   <div class="card" style="text-align:center;">
     <h2 style="justify-content:center;">${team.name}</h2>
     <div class="empty-state"><div class="icn">⏸</div>No player currently up for auction. Waiting for the moderator…</div>
   </div>`}
 
-  ${renderTargetList(auc)}
+  ${renderTargetList(held ? {...auc, currentPlayerId:null} : auc)}
 
   <div class="card">
     <h2>My Squad <span class="n">${squadEntries.length}</span></h2>
@@ -256,6 +307,7 @@ async function placeMyBid(steps){
   const auc = tstate.auction;
   const player = getPlayer(auc.currentPlayerId);
   if(!player || !team) return;
+  if(isPickHeld(auc)){ toast('Hold on — the next player is still being revealed on the big screen.', 'error'); return; }
   if(!biddingIsOpen(auc)){ toast('Bidding is closed — the moderator has paused the auction.', 'error'); return; }
   const nextPrice = bidPriceFor(auc, player, tstate.settings, steps);
   if(!teamCanAffordBid(team, tstate.settings, nextPrice)){ toast('You cannot afford this bid.', 'error'); return; }

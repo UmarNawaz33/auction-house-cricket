@@ -120,6 +120,23 @@ const BIDDING_WAR_COUNT = 3;        // this many bids...
 const BIDDING_WAR_WINDOW_MS = 9000; //  ...within this many ms...
 const BIDDING_WAR_DISPLAY_MS = 5000; // ...shows the "heating up" visual for this long
 
+// Slot-machine player pick + highlights replay (see their own sections
+// below). Declared here, before the listeners, for the same TDZ reason as
+// every block above.
+let __auctionSeen = false;      // false until the first `auction` snapshot has been handled
+let __slotPickPending = false;  // a genuinely new player arrived on THIS snapshot — spin for them
+let __slotEl = null;            // the slot overlay on screen, if any
+let __slotTimer = null;
+// SLOT_TICKS, SLOT_HOLD_MS and slotDelay() live in shared.js: team.js holds
+// its own reveal for exactly as long as this spin lasts (slotPickDurationMs).
+const SLOT_EXIT_MS = 300;
+let __replayEl = null;          // the replay overlay on screen, if any
+let __replayTimer = null;
+let __replayList = [];
+let __replayIndex = 0;
+const REPLAY_SLIDE_MS = 3200;   // per sale
+const REPLAY_EXIT_MS = 300;
+
 watchConnection('connBadge');
 
 db.ref('settings').on('value', s=>{ pv.settings = s.val() || pv.settings; window.__settingsCache = pv.settings; renderPublic(); });
@@ -136,6 +153,11 @@ db.ref('auction').on('value', s=>{
   pv.auction = next;
   renderPublic();
   __justRevealed = false; // consumed by the render just above — see its own comment
+  if(__slotPickPending){
+    __slotPickPending = false;
+    showSlotPick(pv.players[next.currentPlayerId]);
+  }
+  __auctionSeen = true;
 });
 db.ref('recentSales').on('value', s=>{
   pv.sales = salesArray(s.val());
@@ -175,6 +197,9 @@ function handleAuctionTransition(prev, next){
 
   if(nextPlayer && nextPlayer !== prevPlayer){
     __justRevealed = true;
+    // Spin the slot machine — but never for the very first snapshot this
+    // viewer sees: opening the page mid-lot shouldn't replay a "pick".
+    if(__auctionSeen) __slotPickPending = true;
     __bidPulseTimes = [];
     __biddingWarUntil = 0;
     __lastBidPrice = next.currentPrice != null ? next.currentPrice : null;
@@ -455,6 +480,186 @@ function tickSoldTakeover(left){
   __takeoverTimer = setTimeout(dismissSoldTakeover, TAKEOVER_EXIT_MS);
 }
 
+/* ---------------- Slot-machine player pick ----------------
+   When the moderator puts up a NEW player, the big screen spins through
+   random player names/photos, slows down, and lands on the real pick — then
+   fades away to the live lot underneath. Purely theatre: the player was
+   already chosen by moderator.js's nextPlayer() before this ever runs; no
+   Firebase read or write of its own.
+
+   Triggered from the `auction` listener via __slotPickPending, which
+   handleAuctionTransition() only sets once a FIRST snapshot has been seen
+   (__auctionSeen) — opening the page mid-lot shows the lot, not a spin.
+
+   Timing is one chain of setTimeouts with growing delays (slotDelay), the
+   same pattern as the sold takeover — no setInterval, no wall-clock stop
+   condition (CLAUDE.md §7a). Tap or Escape skips straight to the lot.
+   Skipped entirely under prefers-reduced-motion, or when there's nobody
+   else to spin through. Each tick rebuilds the reel's markup, which
+   restarts its CSS roll-in animation — that IS the "reel" motion. */
+function slotPickMarkup(p, landed){
+  const s = p || {};
+  return `
+  <div class="pv-slot-card${landed ? ' is-landed' : ''}">
+    <div class="pv-slot-eyebrow">${landed ? 'Up next' : 'Picking the next player&hellip;'}</div>
+    <div class="pv-slot-window">
+      <div class="pv-slot-reel">
+        <img class="pv-slot-photo" src="${escapeAttr(playerImageSrc(s))}" alt=""
+             onerror="this.onerror=null;this.src='${DEFAULT_PLAYER_IMAGE}';">
+        <div class="pv-slot-name">${escapeHtml(s.name || 'Player')}</div>
+        ${s.category ? `<div class="pv-slot-cat">${escapeHtml(s.category)}</div>` : ''}
+      </div>
+    </div>
+    <div class="pv-slot-hint">Tap to skip</div>
+  </div>`;
+}
+
+function onSlotKey(e){ if(e && e.key === 'Escape') dismissSlotPick(); }
+
+function dismissSlotPick(){
+  if(__slotTimer){ clearTimeout(__slotTimer); __slotTimer = null; }
+  if(__slotEl){ __slotEl.remove(); __slotEl = null; }
+  if(typeof document !== 'undefined' && document.removeEventListener){
+    document.removeEventListener('keydown', onSlotKey);
+  }
+}
+
+function showSlotPick(player){
+  if(typeof document === 'undefined' || !player) return;
+  if(typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const pool = Object.values(pv.players || {}).filter(p => p && p.name && p !== player);
+  if(!pool.length) return;
+  dismissSlotPick();
+  const el = document.createElement('div');
+  el.className = 'pv-slot';
+  el.setAttribute('aria-hidden', 'true'); // the lot underneath is the real announcement
+  el.setAttribute('onclick', 'dismissSlotPick()');
+  el.innerHTML = slotPickMarkup(pool[0]);
+  document.body.appendChild(el);
+  __slotEl = el;
+  document.addEventListener('keydown', onSlotKey);
+  __slotTimer = setTimeout(() => tickSlotPick(player, pool, 1, 0), slotDelay(0));
+}
+
+/** One reel step. `last` is the pool index just shown, so the same name
+ *  never appears twice in a row (when there's more than one to pick from). */
+function tickSlotPick(player, pool, i, last){
+  if(!__slotEl) return; // skipped by a tap/Escape
+  if(i < SLOT_TICKS){
+    let n = Math.floor(Math.random() * pool.length);
+    if(pool.length > 1 && n === last) n = (n + 1) % pool.length;
+    __slotEl.innerHTML = slotPickMarkup(pool[n]);
+    __slotTimer = setTimeout(() => tickSlotPick(player, pool, i + 1, n), slotDelay(i));
+    return;
+  }
+  __slotEl.innerHTML = slotPickMarkup(player, true);
+  __slotTimer = setTimeout(() => {
+    if(!__slotEl) return;
+    __slotEl.classList.add('is-leaving');
+    __slotTimer = setTimeout(dismissSlotPick, SLOT_EXIT_MS);
+  }, SLOT_HOLD_MS);
+}
+
+/* ---------------- Highlights replay ----------------
+   "▶ Replay the auction" on the completed home screen plays every REAL
+   auction sale (via !== 'assigned' — same distinction as the awards and
+   the fireworks gate), oldest first, as a full-screen slideshow, then a
+   closing summary slide. REPLAY_SLIDE_MS per slide, driven by a chain of
+   setTimeouts like the takeover. Tap / → / Space = next slide, Escape or
+   the Close button = stop. Nothing is read from or written to Firebase
+   beyond the pv.sales already loaded. */
+function replaySales(){
+  return (pv.sales || [])
+    .filter(s => s.result === 'sold' && s.via !== 'assigned')
+    .slice()
+    .sort((a, b) => (a.time || 0) - (b.time || 0));
+}
+
+function replaySlideMarkup(sale, i, n){
+  const s = sale || {};
+  return `
+  <div class="pv-replay-bar"><div class="pv-replay-bar-fill" style="animation-duration:${REPLAY_SLIDE_MS}ms;"></div></div>
+  <div class="pv-replay-top">
+    <span class="pv-replay-count">Lot ${i + 1} of ${n}</span>
+    <button type="button" class="pv-replay-close" onclick="event.stopPropagation(); stopReplay();">✕ Close</button>
+  </div>
+  <div class="pv-replay-card">
+    <div class="pv-replay-stamp">Sold</div>
+    <img class="pv-replay-photo" src="${escapeAttr(playerImageSrc({image:s.image}))}" alt=""
+         onerror="this.onerror=null;this.src='${DEFAULT_PLAYER_IMAGE}';">
+    <div class="pv-replay-name">${escapeHtml(s.name || 'Player')}</div>
+    <div class="pv-replay-to">to <strong class="${hueFor(s.team)}">${escapeHtml(s.team || 'a team')}</strong></div>
+    <div class="pv-bid pv-replay-price">${money(s.price)}</div>
+    <div class="pv-replay-hint">Tap for next &middot; Esc to close</div>
+  </div>`;
+}
+
+function replayOutroMarkup(list){
+  const spend = list.reduce((t, s) => t + (s.price || 0), 0);
+  const top = list.reduce((b, s) => (!b || s.price > b.price) ? s : b, null);
+  return `
+  <div class="pv-replay-top">
+    <span class="pv-replay-count">The final whistle</span>
+    <button type="button" class="pv-replay-close" onclick="event.stopPropagation(); stopReplay();">✕ Close</button>
+  </div>
+  <div class="pv-replay-card is-outro">
+    <div class="pv-replay-stamp">That's a wrap!</div>
+    <div class="pv-replay-stats">
+      <div><div class="pv-replay-stat">${list.length}</div><div class="pv-replay-stat-lbl">Players sold</div></div>
+      <div><div class="pv-replay-stat">${money(spend)}</div><div class="pv-replay-stat-lbl">Total spend</div></div>
+    </div>
+    ${top ? `<div class="pv-replay-to">Top buy: <strong>${escapeHtml(top.name)}</strong> &middot; ${fmtMoney(top.price)}</div>` : ''}
+  </div>`;
+}
+
+function onReplayKey(e){
+  if(!e) return;
+  if(e.key === 'Escape') stopReplay();
+  else if(e.key === 'ArrowRight' || e.key === ' ') nextReplaySlide();
+}
+
+function stopReplay(){
+  if(__replayTimer){ clearTimeout(__replayTimer); __replayTimer = null; }
+  if(__replayEl){ __replayEl.remove(); __replayEl = null; }
+  if(typeof document !== 'undefined' && document.removeEventListener){
+    document.removeEventListener('keydown', onReplayKey);
+  }
+}
+
+function startReplay(){
+  if(typeof document === 'undefined') return;
+  const list = replaySales();
+  if(!list.length) return;
+  stopReplay();
+  __replayList = list;
+  const el = document.createElement('div');
+  el.className = 'pv-replay';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-label', 'Auction highlights replay');
+  el.setAttribute('onclick', 'nextReplaySlide()');
+  document.body.appendChild(el);
+  __replayEl = el;
+  document.addEventListener('keydown', onReplayKey);
+  showReplaySlide(0);
+}
+
+function nextReplaySlide(){ if(__replayEl) showReplaySlide(__replayIndex + 1); }
+
+/** Slide i of the sales, then (i === n) the outro, then (i > n) fade out. */
+function showReplaySlide(i){
+  if(!__replayEl) return;
+  if(__replayTimer){ clearTimeout(__replayTimer); __replayTimer = null; }
+  __replayIndex = i;
+  const n = __replayList.length;
+  if(i > n){
+    __replayEl.classList.add('is-leaving');
+    __replayTimer = setTimeout(stopReplay, REPLAY_EXIT_MS);
+    return;
+  }
+  __replayEl.innerHTML = i < n ? replaySlideMarkup(__replayList[i], i, n) : replayOutroMarkup(__replayList);
+  __replayTimer = setTimeout(() => showReplaySlide(i + 1), REPLAY_SLIDE_MS);
+}
+
 /* ---------------- Spectator reactions ----------------
    By explicit request: NOTHING here touches Firebase. No write path, no
    database.rules.json change, no auth — every tap is purely local to that
@@ -654,6 +859,8 @@ function renderHomeScreen(){
         <button type="button" class="pv-btn pv-btn-gold" onclick="toggleAwards()">
           ${showAwards ? 'Hide auction awards' : '🏆 View auction awards'}
         </button>
+        ${replaySales().length ? `
+        <button type="button" class="pv-btn pv-btn-ghost" onclick="startReplay()">▶ Replay the auction</button>` : ''}
         <button type="button" class="pv-btn" onclick="togglePastResults()">
           ${showPastResults ? 'Hide previous results' : 'View previous bidding results'}
         </button>
@@ -1308,6 +1515,137 @@ body.pv-shake{animation:pvShake .55s cubic-bezier(.36,.07,.19,.97) both;}
 .pv-award-detail{font-size:13px; color:var(--pv-ink-2); line-height:1.45;}
 @keyframes pvAwardIn{from{opacity:0; transform:translateY(14px) scale(.97);} to{opacity:1; transform:none;}}
 @media(prefers-reduced-motion:reduce){ .pv-award{animation:none;} }
+
+/* a quieter third button for the hero row */
+.pv-btn-ghost{
+  background:rgba(255,255,255,.08);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.22), 0 14px 32px -16px rgba(0,0,0,.8);
+}
+.pv-btn-ghost:hover{background:rgba(255,255,255,.14); box-shadow:inset 0 0 0 1px rgba(255,255,255,.32), 0 18px 34px -16px rgba(0,0,0,.9);}
+
+/* ---- slot-machine player pick ----
+   showSlotPick()/tickSlotPick() (above, this file). z-index 8500: above the
+   going-once banner (8000), below the sold takeover (9000) and fireworks
+   (9999). Each tick replaces .pv-slot-reel, which replays pvSlotRoll — the
+   quick drop-in that makes it read as a spinning reel. */
+.pv-slot{
+  position:fixed; inset:0; z-index:8500; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; padding:24px;
+  background:radial-gradient(55% 50% at 50% 45%, rgba(228,174,73,.16), transparent 70%), rgba(4,7,12,.9);
+  -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+  animation:pvTakeoverIn .2s ease-out both;
+}
+.pv-slot.is-leaving{animation:pvTakeoverOut .3s ease-in both; pointer-events:none;}
+.pv-slot-card{text-align:center; width:100%; max-width:440px;}
+.pv-slot-eyebrow{
+  font-size:13px; font-weight:680; letter-spacing:2px; text-transform:uppercase;
+  color:var(--pv-ink-3); margin-bottom:18px;
+}
+.pv-slot-window{
+  position:relative; overflow:hidden; border-radius:22px; padding:26px 20px 24px;
+  background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.02));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.14), 0 30px 70px -30px rgba(0,0,0,.9);
+}
+/* top/bottom fades so names look like they roll out of a drum */
+.pv-slot-window::before, .pv-slot-window::after{
+  content:''; position:absolute; left:0; right:0; height:38px; z-index:1; pointer-events:none;
+}
+.pv-slot-window::before{top:0; background:linear-gradient(180deg, rgba(4,7,12,.85), transparent);}
+.pv-slot-window::after{bottom:0; background:linear-gradient(0deg, rgba(4,7,12,.85), transparent);}
+.pv-slot-reel{animation:pvSlotRoll .12s ease-out both;}
+.pv-slot-photo{
+  display:block; width:150px; height:150px; margin:0 auto 18px;
+  object-fit:cover; object-position:center top; border-radius:18px; background:#0B0E16;
+  box-shadow:0 0 0 2px rgba(255,255,255,.14);
+}
+.pv-slot-name{
+  font-family:var(--font-display); text-transform:uppercase;
+  font-size:clamp(30px,5vw,48px); font-weight:700; line-height:1.05; color:#fff; overflow-wrap:anywhere;
+}
+.pv-slot-cat{margin-top:6px; font-size:14px; color:var(--pv-ink-2);}
+.pv-slot-hint{margin-top:20px; font-size:11.5px; color:var(--pv-ink-3);}
+.pv-slot-card.is-landed .pv-slot-eyebrow{color:var(--pv-orange-l);}
+.pv-slot-card.is-landed .pv-slot-window{
+  box-shadow:inset 0 0 0 2px rgba(228,174,73,.75), 0 0 70px -10px rgba(228,174,73,.7), 0 30px 70px -30px rgba(0,0,0,.9);
+  animation:pvSlotLand .45s cubic-bezier(.2,1.4,.4,1) both;
+}
+.pv-slot-card.is-landed .pv-slot-reel{animation:pvSlotLandReel .35s ease-out both;}
+.pv-slot-card.is-landed .pv-slot-photo{box-shadow:0 0 0 2px rgba(228,174,73,.85);}
+@keyframes pvSlotRoll{from{transform:translateY(-38%); opacity:.25; filter:blur(3px);} to{transform:none; opacity:1; filter:none;}}
+@keyframes pvSlotLandReel{from{transform:translateY(-12%);} to{transform:none;}}
+@keyframes pvSlotLand{0%{transform:scale(.94);} 100%{transform:scale(1);}}
+@media(max-width:575.98px){ .pv-slot-photo{width:120px; height:120px;} }
+@media(prefers-reduced-motion:reduce){
+  .pv-slot, .pv-slot.is-leaving, .pv-slot-reel, .pv-slot-card.is-landed .pv-slot-window, .pv-slot-card.is-landed .pv-slot-reel{animation:none;}
+}
+
+/* ---- highlights replay ----
+   startReplay()/showReplaySlide() (above, this file). Same full-screen
+   language as the sold takeover but its own classes — it's a slideshow,
+   not a one-off moment. The progress bar's duration is set inline from
+   REPLAY_SLIDE_MS so the bar and the slide change can't disagree. */
+.pv-replay{
+  position:fixed; inset:0; z-index:8800; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; padding:24px;
+  background:radial-gradient(60% 55% at 50% 40%, rgba(228,174,73,.14), transparent 70%), rgba(4,7,12,.94);
+  -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+  animation:pvTakeoverIn .25s ease-out both;
+}
+.pv-replay.is-leaving{animation:pvTakeoverOut .3s ease-in both; pointer-events:none;}
+.pv-replay-bar{position:absolute; top:0; left:0; right:0; height:4px; background:rgba(255,255,255,.08);}
+.pv-replay-bar-fill{height:100%; width:0; background:linear-gradient(90deg, var(--pv-orange-l), var(--pv-orange)); animation:pvReplayBar linear forwards;}
+@keyframes pvReplayBar{to{width:100%;}}
+.pv-replay-top{
+  position:absolute; top:18px; left:22px; right:22px;
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+}
+.pv-replay-count{font-size:12.5px; font-weight:680; letter-spacing:1.4px; text-transform:uppercase; color:var(--pv-ink-2);}
+.pv-replay-close{
+  font-size:12.5px; padding:7px 14px; border-radius:999px;
+  background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.2); color:#fff;
+  box-shadow:none; -webkit-backdrop-filter:none; backdrop-filter:none;
+}
+.pv-replay-close:hover{background:rgba(255,255,255,.16); transform:none;}
+.pv-replay-card{width:100%; max-width:600px; text-align:center; animation:pvReplayIn .45s cubic-bezier(.2,.8,.3,1) both;}
+.pv-replay-stamp{
+  font-family:var(--font-display); text-transform:uppercase;
+  font-size:clamp(52px,11vw,110px); font-weight:700; line-height:.9; letter-spacing:5px;
+  color:var(--pv-orange-l); transform:rotate(-4deg); margin:0 0 22px;
+  animation:pvStamp .42s cubic-bezier(.2,1.35,.4,1) .12s both;
+}
+.pv-replay-card.is-outro .pv-replay-stamp{font-size:clamp(40px,8vw,80px); letter-spacing:2px;}
+.pv-replay-photo{
+  display:block; width:160px; height:160px; margin:0 auto 22px;
+  object-fit:cover; object-position:center top; border-radius:20px; background:#0B0E16;
+  box-shadow:0 0 0 2px rgba(228,174,73,.5), 0 26px 60px -20px rgba(0,0,0,.85);
+}
+.pv-replay-name{
+  font-family:var(--font-display); text-transform:uppercase;
+  font-size:clamp(30px,5vw,52px); font-weight:700; line-height:1; color:#fff; margin-bottom:10px; overflow-wrap:anywhere;
+}
+.pv-replay-to{font-size:clamp(16px,2.2vw,20px); color:var(--pv-ink-2);}
+.pv-replay-to strong{color:#fff;}
+.pv-replay-to strong.hue-blue{color:var(--pv-blue-l);}
+.pv-replay-to strong.hue-green{color:var(--pv-green-l);}
+.pv-replay-to strong.hue-purple{color:var(--pv-purple-l);}
+.pv-replay-to strong.hue-orange{color:var(--pv-orange-l);}
+.pv-replay-to strong.hue-pink{color:var(--pv-pink-l);}
+.pv-replay-to strong.hue-teal{color:var(--pv-teal-l);}
+.pv-replay .pv-bid.pv-replay-price{justify-content:center; margin:16px 0 0;}
+.pv-replay-hint{margin-top:26px; font-size:11.5px; color:var(--pv-ink-3);}
+.pv-replay-stats{display:flex; justify-content:center; gap:40px; margin-bottom:22px;}
+.pv-replay-stat{font-family:var(--font-display); font-size:clamp(34px,5vw,48px); font-weight:700; color:#fff; line-height:1;}
+.pv-replay-stat .pv-unit{font-size:16px; color:var(--pv-ink-3); margin-left:4px;}
+.pv-replay-stat-lbl{font-size:12px; color:var(--pv-ink-3); margin-top:6px;}
+@keyframes pvReplayIn{from{opacity:0; transform:translateY(16px) scale(.97);} to{opacity:1; transform:none;}}
+@media(max-width:575.98px){
+  .pv-replay-photo{width:124px; height:124px;}
+  .pv-replay-top{top:12px; left:14px; right:14px;}
+}
+@media(prefers-reduced-motion:reduce){
+  .pv-replay, .pv-replay.is-leaving, .pv-replay-card, .pv-replay-stamp{animation:none;}
+  .pv-replay-bar-fill{animation:none; width:100%;}
+}
 
 /* ---- sold takeover ----
    Fixed over everything except the fireworks canvas (z-index 9999), so the

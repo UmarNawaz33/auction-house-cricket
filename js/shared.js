@@ -390,6 +390,24 @@ function callBannerMarkup(auc){
   </div>`;
 }
 
+/* ---------------- Slot-machine pick timing ----------------
+   public.js spins a slot-machine reel on the big screen whenever a new
+   player comes on the block (showSlotPick); team.js shows "Picking the
+   next player…" for EXACTLY as long, so an owner never sees — or bids on —
+   the player before the room does. One set of constants, here, so the two
+   can't drift apart. public.js schedules tick 1 after slotDelay(0), tick
+   i+1 after slotDelay(i), lands after tick SLOT_TICKS-1, then holds
+   SLOT_HOLD_MS before fading; slotPickDurationMs() is that whole span up
+   to the start of the fade. */
+const SLOT_TICKS = 16;       // names shown before landing
+const SLOT_HOLD_MS = 1400;   // how long the landed name stays up
+function slotDelay(i){ return 55 + Math.round(Math.pow(i / SLOT_TICKS, 3) * 340); }
+function slotPickDurationMs(){
+  let ms = SLOT_HOLD_MS;
+  for(let i = 0; i < SLOT_TICKS; i++) ms += slotDelay(i);
+  return ms;
+}
+
 /* ---------------- Live sales log ---------------- */
 
 /**
@@ -547,6 +565,19 @@ function teamCanAffordBid(team, settings, price){
   const reserve = reserveNeeded(team, settings, true);
   if((remainingOf(team) - price) < reserve) return false;
   return true;
+}
+
+/**
+ * The highest single bid `team` could legally make right now — the exact
+ * inverse of teamCanAffordBid() above: its purse minus the reserve it must
+ * keep back to fill the rest of its minimum squad at the default base
+ * price. 0 when the squad is already full (no bid is legal at all) or the
+ * reserve swallows the whole purse. Shown as team.js's "Max You Can Bid"
+ * chip; keep the two functions in step if either rule ever changes.
+ */
+function maxAffordableBid(team, settings){
+  if(squadCountOf(team) >= (settings.maxPlayersPerTeam||Infinity)) return 0;
+  return Math.max(0, remainingOf(team) - reserveNeeded(team, settings, true));
 }
 
 /* ---------------- Connection status badge (optional, used on portals) ---------------- */

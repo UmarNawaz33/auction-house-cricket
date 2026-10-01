@@ -236,6 +236,8 @@ be sanity-checked against every caller before it ships:
 | `soldLabel` | `renderSalesTable` (shared.js itself); moderator.js's Players tab, Summary tab, `editPlayerPrompt`, `confirmDeletePlayer`; admin.js's Players tab. Reads `sale.via` (`'assigned'` → `'retained'`, anything else → `'sold'`) — **not** `player.status`, which is `'sold'` for both a real auction sale and a moderator Assign and can't tell them apart on its own. Lowercase; a caller re-cases it if it needs Title Case. **public.js does NOT call this** — its own two results-table spots (see `renderSalesTable` row above) inline the identical `via==='assigned'` check themselves, capitalized, because it never calls the shared table renderer. Touch both if the wording changes again. |
 | `isPaused`, `isAwaitingNext`, `isCompleted`, `biddingIsOpen`, `sessionInProgress` | all four auction-state-aware pages (not admin's login gate) |
 | `bidPriceFor`, `teamCanAffordBid`, `spentOf`, `squadCountOf`, `remainingOf`, `reserveNeeded` | team.js (bid buttons), moderator.js (floor eligibility) |
+| `SLOT_TICKS`, `SLOT_HOLD_MS`, `slotDelay`, `slotPickDurationMs` | public.js's slot-machine reel (`showSlotPick`/`tickSlotPick`) AND team.js's matching "Picking the next player…" hold (§5c). Shared so the two pages can't drift apart: change the reel's length here, never by redefining these in a page file (a second top-level `const` of the same name in another classic script is a SyntaxError that kills the whole page). |
+| `maxAffordableBid` | team.js's "Max You Can Bid" chip (added 2026-10-04, §5c). The exact inverse of `teamCanAffordBid()` (purse minus the minimum-squad reserve, 0 when the squad is full) — **change both together** if the affordability rule ever changes; `pick-replay-maxbid.test.js` asserts `teamCanAffordBid(max)` is true and `max+0.5` false. |
 | `toast`, `showModal`, `closeModal`, `escapeAttr` | all four |
 | `downloadCSV`, `downloadJSON`, `stampedName`, `triggerDownload` | admin.js (Data & Reset exports), moderator.js (`exportCSV`) |
 | `fmtMoney`, `fmtTime`, `watchConnection`, `genKeyString` | all four / admin+moderator |
@@ -498,9 +500,12 @@ Neither adds a database field or a Firebase write. Covered by
    team hue.
 2. **Team target list** (team.js only) — `renderTargetList()` lists every
    still-pending player as a star chip (starred first); tapping calls
-   `toggleTarget(id)`. When a starred player is on the block, the dashboard
-   shows a pulsing "🎯 Your target is up" alert and adds `.is-target` to the
-   lot card. **Stored ONLY in `localStorage`, key `pv_targets_<teamId>`**:
+   `toggleTarget(id)`. When a starred player is on the block, a pulsing
+   `.pv-target-chip` ("🎯 Your target is up") appears INSIDE the lot card,
+   top-left (the same spot public.js puts its `.pv-war-tag`), and the card
+   gets `.is-target` (gold glow ring). Until 2026-10-04 this was a separate
+   full-width `.pv-target-alert` bar above the card; it was moved inside by
+   request, and that class no longer exists. **Stored ONLY in `localStorage`, key `pv_targets_<teamId>`**:
    no Firebase write, no rules change, private to that team on that device.
    Every storage access is in try/catch because localStorage can be missing
    or throw (private mode; the Node harness has none — tests inject a fake
@@ -510,6 +515,73 @@ Neither adds a database field or a Firebase write. Covered by
    pending. CSS (`.pv-target*`) lives in theme.css, because team.html has
    no injected sheet of its own; `.pv-target` is a `<button>`, so it zeroes
    the generic button rule's shadow, blur and hover lift (the §6a lesson).
+
+## 5c. Slot-machine pick, highlights replay, "Max You Can Bid" (2026-10-04)
+
+None of these adds a database field or a Firebase write. Covered by
+`tests/pick-replay-maxbid.test.js`.
+
+1. **Slot-machine player pick** (public.js only) — when a genuinely NEW
+   player comes on the block, `showSlotPick(player)` puts up a full-screen
+   overlay (`.pv-slot`, z-index 8500: above the going-once banner at 8000,
+   below the takeover at 9000 and fireworks at 9999) that spins through
+   `SLOT_TICKS` random OTHER players, slowing down (`slotDelay(i)`), then
+   lands on the real pick for `SLOT_HOLD_MS` and fades out. Pure theatre:
+   moderator.js's `nextPlayer()` already chose the player. **Trigger:**
+   `handleAuctionTransition()`'s new-player branch sets `__slotPickPending`,
+   but only once `__auctionSeen` is true; the `auction` listener sets that
+   flag after handling its first snapshot, so opening the page mid-lot
+   never spins. The listener calls `showSlotPick()` after `renderPublic()`.
+   Timing is one `setTimeout` chain like the takeover (no `setInterval`, no
+   wall-clock stop condition, §7a). Each tick rebuilds `.pv-slot-reel`,
+   which restarts its CSS `pvSlotRoll` drop-in; that restart is the reel
+   motion. Tap or Escape skips (`dismissSlotPick`), and a tick still pending
+   after a skip is a no-op. Skipped entirely under reduced motion, or when
+   there's no other player to spin through. The overlay is `aria-hidden`:
+   the lot underneath is the real announcement. The `.pv-lot.is-revealing`
+   animation plays underneath while the overlay is up. The reel's timing
+   constants (`SLOT_TICKS`, `SLOT_HOLD_MS`, `slotDelay`) live in shared.js,
+   not here; see the next item for why.
+   **team.html waits out the spin** (added the same day, by request: owners
+   were seeing, and could bid on, the player before the room did). The
+   team.js `auction` listener calls `notePickTransition(prev, next)` with
+   the same trigger rules as the big screen: never on the first snapshot
+   (`__teamAuctionSeen`), never for a bid on the same player, and not when
+   there's no other named player to spin through (the big screen skips its
+   spin then). When it fires, `__pickHoldPlayer` holds that player for
+   `slotPickDurationMs()` (shared.js: every reel delay plus `SLOT_HOLD_MS`,
+   i.e. until the big screen starts fading to the lot), cleared by its own
+   timer rather than a wall-clock check. While `isPickHeld(auc)`,
+   `renderDashboard()` shows a `.pv-pick-wait` card ("Picking the next
+   player…", bouncing dots) in place of the lot. That means no player, no
+   bid buttons, no target chip, and the target list gets `currentPlayerId`
+   blanked so it doesn't tag them "on the block". `placeMyBid()` also
+   refuses with a toast. A new player mid-hold restarts it, and the floor
+   emptying clears it. This is client-side only: `biddingOpen` in Firebase
+   is untouched, so it can't be enforced against a determined bypass;
+   that's by design, since it's about fairness of presentation, not access
+   control. A test asserts `slotPickDurationMs()` equals the sum of the
+   delays public.js's reel actually schedules, so the two pages stay in
+   lockstep.
+2. **Highlights replay** (public.js only) — a "▶ Replay the auction" button
+   (`.pv-btn-ghost`) on the completed home screen, between the awards and
+   results buttons, shown only when `replaySales()` is non-empty.
+   `replaySales()` returns REAL auction sales only (`via !== 'assigned'`,
+   no unsold), oldest first. `startReplay()` opens `.pv-replay` (z-index
+   8800, `role="dialog"`). `showReplaySlide(i)` shows sale i for
+   `REPLAY_SLIDE_MS` each (the progress bar's `animation-duration` is set
+   inline from the same constant), then a "That's a wrap" summary slide
+   (`replayOutroMarkup`), then fades out (`REPLAY_EXIT_MS`). Same
+   `setTimeout`-chain pattern. Tap, → or Space = `nextReplaySlide()`;
+   Escape or the Close button = `stopReplay()`. The Close button calls
+   `event.stopPropagation()` so it doesn't also count as a "next" tap on
+   the overlay.
+3. **"Max You Can Bid"** (team.js) — a plain `.chip` in the `.chip-row`,
+   right after Purse Remaining, in the same design as its neighbours (by
+   request). Value is `maxAffordableBid(team, settings)` (shared.js, §4),
+   or "Squad full" when no bid is legal at all.
+4. **Target list tweak** — the "Your target is up" bar became a chip inside
+   the lot card; see §5b item 2.
 
 ## 6. Known collisions — check before naming a new class
 
@@ -560,7 +632,7 @@ the DOM, load the real `js/*.js` files unmodified into a VM context, and
 assert on what gets rendered or written.
 
 ```
-node tests/run.js                    # everything (521 checks, well under 1s)
+node tests/run.js                    # everything (587 checks, well under 1s)
 node tests/run.js render markup      # only the named suites
 node tests/run.js --list             # see suite names
 ```
@@ -580,7 +652,8 @@ node tests/run.js --list             # see suite names
 | `public-sound` | public-sound.test.js | `enablePublicSound()`: success unlocks + updates `#soundToggle` + confirms with a toast; a genuinely rejected `play()` leaves `publicSoundEnabled` false and the button retry-able, with an error toast; missing `Audio` doesn't throw. `playPublicSoldSound()`: silent before enabling (even for a real new sale), wired to the same gate as the takeover/fireworks once enabled (first load, repeat, unsold, assign, re-sale — same matrix as `takeover`), and reuses one `<audio>` element rather than rebuilding it. Plus: `index.html` has `#soundToggle` wired to `enablePublicSound()`, and the other three pages don't | public.js's `enablePublicSound`/`playPublicSoldSound`/`updateSoundToggle`, `index.html`'s `#soundToggle`, or `maybeCelebrateNewSale` |
 | `audience-features` | audience-features.test.js | The audience features (§5), all public.js-only: **record banner** — `seedRecordFromHistory`/`isNewRecord`/`updateRecord` (never a tie, never the first-ever sale, `via:'assigned'` never counts) and `soldTakeoverMarkup(sale,{isRecord})`'s content, end-to-end through the real `maybeCelebrateNewSale` gate; **bidding war** — `handleAuctionTransition()` registers a pulse only on a GENUINE bid (not an unrelated `auction` write), stale pulses outside `BIDDING_WAR_WINDOW_MS` are pruned, `registerBid()`/`isBiddingWarActive()`'s timing, and the tag's presence in `renderLiveLot()`; **reveal animation** — `__justRevealed` set for a new player and NOT for a bid on the same one, consumed (reset) after exactly one render via the real registered `db.ref('auction').on('value')` listener (`ref()._trigger()`, dom-stub.js); **reactions** — zero Firebase writes ever, the bar injected once and not duplicated, `sendReaction()`'s particle creation/spread/self-removal, `clearReactions()`, and **a regression test for a real bug**: `REACTION_EMOJI` must be declared before the top-level `injectReactionBar()` call that reads it (§6a); **page layout** — Teams renders before Live Results on the live page (moved by request; the completed/home screen's order was deliberately left alone) | any of the audience features above, `renderPublic()`'s live-branch section order, or `handleAuctionTransition`/`registerBid`/`isBiddingWarActive` specifically since several features share it |
 | `showtime-features` | showtime-features.test.js | The §5a features, spanning shared.js/moderator.js/team.js/public.js: `callBannerMarkup()`'s output for 'once'/'twice'/null/unrecognised, and that it's wired into BOTH public.js's live lot and team.js's dashboard (Firebase-write coverage for `callOnce`/`callTwice`/`cancelCall`/clearing lives in `flow`/`bidsteps` instead, next to every other `auction` write); that `injectStageWash()`/`updateStageWash()` never throw across every auction shape (their actual CSS class output isn't assertable here — the test stub's `classList` is a no-op, see §6a — real-browser verification is what actually proved it); `isNewRecord()`'s result threading into `celebrateSaleFirework(isRecord)`'s stubbed call and into `screenShakeForRecord()` never throwing; that `.pv-lot.is-revealing` still appears/doesn't-replay (the CSS-only reveal upgrade didn't touch this JS); that `lotMarkup()`'s leading capsule and `teamTilesMarkup()` tag the SAME team with the SAME `hueFor()` class, and that public.js's `renderTeamsPanel()` calls `teamTilesMarkup()`; and that team.js's dashboard shows the signed-in team's OWN name as a plain `.chip` (not a coloured tile), first in the `.chip-row` ahead of Purse Remaining/Squad Size, with no other team rendered anywhere (the all-teams grid and the single colour-tile revision are both gone) | any of the §5a features, `callBannerMarkup`, `teamTilesMarkup`, `lotMarkup`'s leader hue class, `auction.callState` generally, or team.js's own-team chip |
-| `awards-targets` | awards-targets.test.js | §5b. **Awards:** `computeAwards()` picks the right winner for each award, uses auction sales only (a retained player at a higher price never wins a player award), never lets an unsold player win, and degrades gracefully (no data, retained-only, zero base price, a single buying team); the button appears on the completed home screen only when there's history, toggles the panel without opening the results table, never shows the panel while the auction is live, and HTML-escapes winner names. **Targets:** pending players listed, sold ones not; starring saves to `localStorage` under `pv_targets_<teamId>` with zero Firebase writes; starred players sort first; un-starring works; a reload restores the list; another team on the same device can't see it; the alert and lot ring appear only for a starred player on the block; the list hides once the auction is complete; with no localStorage at all, it renders and still works in memory | public.js's `computeAwards`/`renderAwardsPanel`/`toggleAwards`/`renderHomeScreen` buttons, or team.js's target-list functions/alert |
+| `awards-targets` | awards-targets.test.js | §5b. **Awards:** `computeAwards()` picks the right winner for each award, uses auction sales only (a retained player at a higher price never wins a player award), never lets an unsold player win, and degrades gracefully (no data, retained-only, zero base price, a single buying team); the button appears on the completed home screen only when there's history, toggles the panel without opening the results table, never shows the panel while the auction is live, and HTML-escapes winner names. **Targets:** pending players listed, sold ones not; starring saves to `localStorage` under `pv_targets_<teamId>` with zero Firebase writes; starred players sort first; un-starring works; a reload restores the list; another team on the same device can't see it; the "Your target is up" chip sits INSIDE the lot card (the old separate bar is gone) and, with the lot ring, appears only for a starred player on the block; the list hides once the auction is complete; with no localStorage at all, it renders and still works in memory | public.js's `computeAwards`/`renderAwardsPanel`/`toggleAwards`/`renderHomeScreen` buttons, or team.js's target-list functions/chip |
+| `pick-replay-maxbid` | pick-replay-maxbid.test.js | §5c. **Slot pick:** driven through the real registered `auction` listener (`ref()._trigger()`): never on the first snapshot, never for a bid, pause or empty floor on the same lot, spins exactly once for a genuinely new player; the reel itself, with timers captured: one `aria-hidden` overlay that never shows the real pick before landing, delays that never shrink, lands with `.is-landed`/"Up next", holds `SLOT_HOLD_MS`, fades, is removed; tap/Escape skip, and a stale tick after a skip is a no-op; no overlay with nobody else to spin or under reduced motion; HTML-escaping. **team.html's matching wait:** `slotPickDurationMs()` equals the sum of the timer delays public.js's reel actually schedules up to its fade; via team.js's real registered `auction` listener: no wait on the first snapshot or for a bid, a new player shows "Picking the next player…" with no player, no bid buttons and no "on the block" tag anywhere, `placeMyBid()` refuses and writes nothing, the reveal fires after exactly `slotPickDurationMs()`, a further new player re-arms it, the floor emptying clears it, and there's no wait when the big screen would have nobody else to spin through. **Replay:** auction sales only, oldest first; the button only when there's something to replay; slides in order with "Lot i of n", `REPLAY_SLIDE_MS` per slide matching the progress bar, outro slide with totals and top buy, fade, removal; tap/→ advance, Escape/Close stop (Close uses `stopPropagation`), next-after-close is a no-op; HTML-escaping. **Max bid:** `maxAffordableBid()` = purse − reserve, agrees with `teamCanAffordBid()` at the boundary, 0 for a full squad, never negative; team.js's chip is a plain `.chip` after Purse Remaining and shows "Squad full" when appropriate | shared.js's slot timing (`SLOT_TICKS`/`SLOT_HOLD_MS`/`slotDelay`/`slotPickDurationMs`), team.js's `notePickTransition`/`isPickHeld`/`.pv-pick-wait`, public.js's `showSlotPick`/`tickSlotPick`/`slotPickMarkup`/`dismissSlotPick`, the `__slotPickPending`/`__auctionSeen` wiring in the `auction` listener or `handleAuctionTransition()`, the replay functions, shared.js's `maxAffordableBid`/`teamCanAffordBid`, or team.js's chip row |
 
 **What these tests do NOT catch** — they run in a headless `vm` context with
 a fake DOM, not a real browser: no actual CSS is applied, so a visual/layout

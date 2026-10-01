@@ -5,8 +5,9 @@
         renderAwardsPanel(), shown on the completed home screen behind a
         "View auction awards" button (toggleAwards()).
      2. Team owner target list (team.js): loadTargets()/toggleTarget()/
-        isTarget()/renderTargetList() and the "Your target is up" alert —
-        stored ONLY in localStorage, never Firebase.
+        isTarget()/renderTargetList() and the "Your target is up" chip
+        (inside the lot card since 2026-10-04 — it was a separate bar above
+        the card before that) — stored ONLY in localStorage, never Firebase.
 
    Run this after touching any of those, or renderHomeScreen()'s buttons.
    ============================================================ */
@@ -165,13 +166,17 @@ function run(){
     const {ctx} = teamCtx(true);
     evalIn(ctx, "toggleTarget('p1'); tstate.auction = {currentPlayerId:'p1', currentPrice:0, leaderTeamId:null, biddingOpen:true};");
     let html = evalIn(ctx, 'renderDashboard()');
-    suite.check('flashes the alert when a starred player is on the block', html.includes('pv-target-alert') && /Your target is up/.test(html));
+    suite.check('shows a "Your target is up" chip when a starred player is on the block', html.includes('pv-target-chip') && /Your target is up/.test(html));
+    suite.check('  the chip sits INSIDE the lot card, not as a separate bar above it',
+      html.indexOf('card pv-lot is-target') !== -1 && html.indexOf('pv-target-chip') > html.indexOf('card pv-lot is-target')
+      && html.indexOf('pv-target-chip') < html.indexOf('pv-lot-grid'));
+    suite.check('  the old separate alert bar is gone', !html.includes('pv-target-alert'));
     suite.check('  and rings the lot card', html.includes('card pv-lot is-target'));
-    suite.check('  and tags the chip as on the block', /pv-target is-on is-live/.test(html));
+    suite.check('  and tags the list chip as on the block', /pv-target is-on is-live/.test(html));
 
     evalIn(ctx, "tstate.auction = {currentPlayerId:'p2', currentPrice:0, leaderTeamId:null, biddingOpen:true};");
     html = evalIn(ctx, 'renderDashboard()');
-    suite.check('no alert for a player who is not a target', !html.includes('pv-target-alert') && !html.includes('is-target'));
+    suite.check('no chip for a player who is not a target', !html.includes('pv-target-chip') && !html.includes('is-target'));
 
     evalIn(ctx, "tstate.auction = {completed:true};");
     html = evalIn(ctx, 'renderDashboard()');
