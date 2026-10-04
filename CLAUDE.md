@@ -285,7 +285,11 @@ design**:
   the people watching, not the people running the auction. (A fifth, a live
   purse race bar, was built the same day and then removed by request —
   `renderPurseRace()`/`.pv-race*` no longer exist; don't reintroduce them
-  from an old memory or an old diff without being asked.) Also that day:
+  from an old memory or an old diff without being asked. A **live draft
+  board** — a tile per player filling in with the buying team's colour,
+  `renderDraftBoard()`/`draftBoardTile()`/`.pv-board*` plus a
+  `tests/draft-board.test.js` suite — went the same way on 2026-10-05:
+  built and removed by request the same day, nothing left of it.) Also that day:
   the live page's section order changed to **Teams above Live Results**
   (`renderPublic()`'s live branch) — the completed/home screen's
   "Final Squads" vs "Previous Bidding Results" order was deliberately left
